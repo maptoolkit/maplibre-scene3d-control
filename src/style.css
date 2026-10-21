@@ -1,0 +1,24 @@
+.maplibre-scene3d-control {
+  --scene3d-control-color: #333;
+  --scene3d-control-color-active: #0074d9;
+}
+
+.maplibre-scene3d-control-hidden {
+  display: none;
+}
+
+.maplibre-scene3d-control-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--scene3d-control-color);
+}
+
+.maplibre-scene3d-control-toggle svg {
+  width: 20px;
+  height: 20px;
+}
+
+.maplibre-scene3d-control-toggle[aria-pressed="true"] {
+  color: var(--scene3d-control-color-active);
+}
