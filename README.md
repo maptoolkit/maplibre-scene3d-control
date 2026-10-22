@@ -56,7 +56,7 @@ The package is ESM-only. With an [import map](https://developer.mozilla.org/en-U
   map.addControl(
     new Scene3dControl({
       apiKey: "YOUR_KEY",
-      library: () => import("https://unpkg.com/@maptoolkit/maplibre-3d-layers@^0.5.0/dist/maplibre-3d-layers.standalone.mjs"),
+      library: () => import("https://unpkg.com/@maptoolkit/maplibre-3d-layers@^0.5.1/dist/maplibre-3d-layers.standalone.mjs"),
     }),
   );
 </script>
@@ -111,7 +111,7 @@ Every part is optional except `version` and `source`. A layer goes under the sty
 
 ## Requirements
 
-- MapLibre GL JS ≥ 6, `@maptoolkit/maplibre-3d-layers` ≥ 0.5 and three.js ≥ 0.160 (peer dependencies of the 3D library).
+- MapLibre GL JS ≥ 6, `@maptoolkit/maplibre-3d-layers` ≥ 0.5.1 and three.js ≥ 0.160 (peer dependencies of the 3D library).
 - A Maptoolkit API key with access to the buildings source.
 - A style with a scene, or a scene passed with `scene`. Vegetation also needs the style's `mtk` source.
 
