@@ -17,17 +17,29 @@ const SCENE: Scene3dManifest = {
 
 type Layer = { id: string; type: string; layout?: Record<string, unknown>; [k: string]: unknown };
 
+/** The test style's own layers, fresh each time (a style update brings new objects). */
+const baseLayers = (): Layer[] => [
+  { id: "background", type: "background" },
+  { id: "building_3d", type: "fill-extrusion", layout: {} },
+  { id: "road", type: "line" },
+  { id: "road_label", type: "symbol" },
+  { id: "place_label", type: "symbol" },
+];
+
 /** A stand-in for maplibre-gl's Map with just what the control touches. */
 function createMap({ metadata = { [SCENE3D_METADATA_KEY]: SCENE } as Record<string, unknown>, zoom = 16, pitch = 60 } = {}) {
   const listeners = new Map<string, Set<(e?: unknown) => void>>();
-  let style = { _loaded: true };
-  let layers: Layer[] = [
-    { id: "background", type: "background" },
-    { id: "building_3d", type: "fill-extrusion", layout: {} },
-    { id: "road", type: "line" },
-    { id: "road_label", type: "symbol" },
-    { id: "place_label", type: "symbol" },
-  ];
+  // Like MapLibre's Style: the stylesheet it keeps holds the current metadata.
+  const makeStyle = () => ({
+    _loaded: true,
+    stylesheet: {
+      get metadata() {
+        return metadata;
+      },
+    },
+  });
+  let style = makeStyle();
+  let layers: Layer[] = baseLayers();
   const sources = new Set(["mtk"]);
   const globalState: Record<string, unknown> = {};
   const map = {
@@ -68,16 +80,34 @@ function createMap({ metadata = { [SCENE3D_METADATA_KEY]: SCENE } as Record<stri
     loadSource: (id: string) => listeners.get("sourcedata")?.forEach((f) => f({ sourceId: id, sourceDataType: "metadata" })),
     ids: () => layers.map((l) => l.id),
     newStyle: (next: Layer[], nextMetadata: Record<string, unknown> = {}) => {
-      style = { _loaded: true };
+      style = makeStyle();
       layers = next;
       metadata = nextMetadata;
       sources.clear();
       sources.add("mtk");
       listeners.get("style.load")?.forEach((f) => f());
     },
-    diffStyle: (next: Layer[], nextMetadata: Record<string, unknown> = {}) => {
-      layers = next;
+    /**
+     * setStyle with diff, as MapLibre does it: layers and sources the new style lacks are dropped, but
+     * custom layers stay where they were (MapLibre never serializes them, so the diff never sees them).
+     */
+    // MapLibre 6 then fires style.load with the same Style object, then styledata; `styleLoad: false`
+    // leaves out the style.load, as older MapLibre versions do.
+    diffStyle: (next: Layer[], nextMetadata: Record<string, unknown> = {}, { styleLoad = true } = {}) => {
+      const old = layers;
+      const result = [...next];
+      old.forEach((layer, i) => {
+        if (layer.type !== "custom") return;
+        const prev = old
+          .slice(0, i)
+          .reverse()
+          .find((p) => result.some((r) => r.id === p.id));
+        result.splice(prev ? result.findIndex((r) => r.id === prev.id) + 1 : 0, 0, layer);
+      });
+      layers = result;
       metadata = nextMetadata;
+      for (const id of [...sources]) if (id !== "mtk") sources.delete(id);
+      if (styleLoad) listeners.get("style.load")?.forEach((f) => f());
       listeners.get("styledata")?.forEach((f) => f());
     },
   };
@@ -216,19 +246,66 @@ describe("Scene3dControl", () => {
     expect(map.ids()).toContain("scene3d-trees");
   });
 
-  it("restores the scene after a diffed setStyle dropped its layers", async () => {
+  it.each([
+    ["MapLibre 6 (style.load)", true],
+    ["older MapLibre (styledata only)", false],
+  ])("keeps the 3D layers through a diffed setStyle with the same scene: %s", async (_, styleLoad) => {
     const map = createMap();
+    const { load, made } = fakeLibrary();
+    new Scene3dControl({ library: load }).onAdd(map);
+    await flush();
+    map.loadSource("scene3d-buildings");
+    const before = map.ids();
+    const count = made.length;
+    // An editor applying an edit: the same style layers (its own 3D buildings visible again), the same scene.
+    map.diffStyle(baseLayers(), { [SCENE3D_METADATA_KEY]: structuredClone(SCENE) }, { styleLoad });
+    await flush();
+    expect(made).toHaveLength(count); // no new 3D layers
+    expect(map.ids()).toEqual(before); // LOD1 back under them
+    expect(map.addSource).toHaveBeenCalledTimes(2);
+    expect(map.getLayoutProperty("building_3d", "visibility")).toBe("none"); // the source had loaded: hidden at once
+  });
+
+  it("rebuilds after a diffed setStyle with another scene", async () => {
+    const map = createMap();
+    const { load, made } = fakeLibrary();
+    new Scene3dControl({ library: load }).onAdd(map);
+    await flush();
+    const count = made.length;
+    map.diffStyle(baseLayers(), { [SCENE3D_METADATA_KEY]: { ...SCENE, gltf: SCENE.gltf!.slice(0, 1) } });
+    await flush();
+    expect(made.length).toBe(count + 2); // Fill3D and the one glTF layer, new
+    expect(map.ids()).toContain("scene3d-trees");
+    expect(map.ids()).not.toContain("scene3d-rocks");
+  });
+
+  it("keeps the layers when setScene gets the same scene again", async () => {
+    const map = createMap({ metadata: {} });
+    const { load, made } = fakeLibrary();
+    const control = new Scene3dControl({ library: load });
+    control.onAdd(map);
+    await control.setScene(SCENE);
+    await flush();
+    const count = made.length;
+    await control.setScene(structuredClone(SCENE));
+    await flush();
+    expect(made).toHaveLength(count);
+    await control.setScene({ ...SCENE, gltf: [] });
+    await flush();
+    expect(made.length).toBeGreaterThan(count);
+  });
+
+  it("builds a scene a diffed setStyle brings and removes one it takes away", async () => {
+    const map = createMap({ metadata: {} });
     new Scene3dControl({ library: fakeLibrary().load }).onAdd(map);
     await flush();
-    map.diffStyle(
-      [
-        { id: "bg", type: "background" },
-        { id: "label", type: "symbol" },
-      ],
-      { [SCENE3D_METADATA_KEY]: SCENE },
-    );
+    expect(map.ids().some((id) => id.startsWith("scene3d-"))).toBe(false);
+    map.diffStyle(baseLayers(), { [SCENE3D_METADATA_KEY]: SCENE });
     await flush();
-    expect(map.ids()).toEqual(["bg", "scene3d-lod1", "scene3d-fill3d", "scene3d-trees", "label", "scene3d-rocks"]);
+    expect(map.ids()).toEqual(expect.arrayContaining(["scene3d-lod1", "scene3d-fill3d", "scene3d-trees"]));
+    map.diffStyle(baseLayers(), {});
+    await flush();
+    expect(map.ids().some((id) => id.startsWith("scene3d-"))).toBe(false);
   });
 
   it("can be switched off, overridden with another scene and given a toggle button", async () => {

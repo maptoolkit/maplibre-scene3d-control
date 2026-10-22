@@ -103,6 +103,8 @@ const CUBE_ICON =
 // MapLibre's Style is private API; the control only reads whether it has loaded and its identity.
 type StyleHandle = { _loaded?: boolean } | undefined;
 const styleOf = (map: MaplibreMap) => (map as unknown as { style?: StyleHandle }).style;
+/** Compares scenes across style updates: the metadata comes as a new object each time. */
+const sceneKeyOf = (scene: Scene3dManifest | null) => (scene ? JSON.stringify(scene) : null);
 
 /**
  * A MapLibre GL JS control plugin that adds the 3D scene of a Maptoolkit style: 3D buildings
@@ -135,6 +137,13 @@ export class Scene3dControl extends Evented<Scene3dControlEventType> implements 
   private warned = new Set<string>();
   /** Stops waiting for the buildings source (see hideOnceBuildingsLoad). */
   private stopWaiting?: () => void;
+  /** The scene last read from the style or override (also an unsupported one), and as JSON; null for none. */
+  private sceneRef: Scene3dManifest | null = null;
+  private sceneKey: string | null = null;
+  /** Whether the buildings source of the current scene has loaded (its TileJSON answered). */
+  private sourceOk = false;
+  /** Custom layers added with `position: "top"`. */
+  private topIds = new Set<string>();
 
   constructor(options: Scene3dControlOptions = {}) {
     super();
@@ -199,7 +208,10 @@ export class Scene3dControl extends Evented<Scene3dControlEventType> implements 
 
   /**
    * Replace the style's scene: a manifest, the URL of one, `null` for none, or `undefined` to go back
-   * to the style's own scene.
+   * to the style's own scene. The same scene again keeps the layers.
+   *
+   * MapLibre ignores a diffed `setStyle` that changes nothing but the metadata, so a scene that changes
+   * on its own never reaches the control that way; pass it here (or use `setStyle` with `diff: false`).
    */
   async setScene(scene: Scene3dManifest | string | null | undefined): Promise<void> {
     if (typeof scene === "string") {
@@ -207,6 +219,8 @@ export class Scene3dControl extends Evented<Scene3dControlEventType> implements 
       if (!response.ok) throw new Error(`Scene ${scene}: HTTP ${response.status}`);
       scene = (await response.json()) as Scene3dManifest;
     }
+    // The same scene again (e.g. after every style update of an editor) keeps the layers.
+    if (scene !== undefined && this.override !== undefined && sceneKeyOf(scene) === sceneKeyOf(this.override)) return;
     this.override = scene;
     this.refresh();
   }
@@ -253,19 +267,39 @@ export class Scene3dControl extends Evented<Scene3dControlEventType> implements 
 
   private onStyleLoad = () => {
     if (!this.map) return;
+    this.pitch = null; // a new style, or a diffed one, starts with its own global state
+    // MapLibre 6 fires style.load after a diffed setStyle too; the Style object stays the same then.
+    if (styleOf(this.map) === this.loadedStyle) {
+      this.syncWithStyle();
+      return;
+    }
     this.loadedStyle = styleOf(this.map);
-    this.pitch = null; // a new style starts with its own global state
     this.teardown(false); // whatever of the old scene a style diff left behind
     this.refresh();
   };
 
-  // A style switch with diff (setStyle without { diff: false }) keeps the Style object, fires no
-  // style.load and drops our layers as "not in the new style": rebuild from the new style.
-  private onStyleData = () => {
-    if (this.building || !this.map || !this.styleReady() || !this.scene) return;
-    const ids = [...this.native, ...this.custom.map((l) => l.id)];
-    if (ids.some((id) => !this.map!.getLayer(id))) this.refresh();
-  };
+  private onStyleData = () => this.syncWithStyle();
+
+  // A diffed setStyle (setStyle without { diff: false }) keeps the Style object. It drops our source
+  // and native layers as "not in the new style" but keeps the custom layers (MapLibre never serializes
+  // them), and it may bring another scene or none. Same scene: put the source and native layers back
+  // and keep the 3D layers. Another scene: rebuild.
+  private syncWithStyle() {
+    if (this.building || !this.map || !this.styleReady()) return;
+    const map = this.map;
+    const next = this.currentScene();
+    if (next !== this.sceneRef) {
+      if (sceneKeyOf(next) !== this.sceneKey) {
+        this.refresh();
+        return;
+      }
+      this.sceneRef = next; // the same scene in a new object
+    }
+    if (!this.scene) return;
+    if (this.custom.some((l) => !map.getLayer(l.id))) this.refresh();
+    else if (this.native.some((id) => !map.getLayer(id)) || !map.getSource(this.sourceId())) this.restoreNative();
+    else this.syncPitch();
+  }
 
   // The 3D layers take the terrain as it is when they are added.
   private onTerrain = () => {
@@ -297,8 +331,11 @@ export class Scene3dControl extends Evented<Scene3dControlEventType> implements 
   private currentScene(): Scene3dManifest | null {
     if (!this.enabled) return null;
     if (this.override !== undefined) return this.override;
-    const scene = this.map?.getStyle()?.metadata as Record<string, unknown> | undefined;
-    return (scene?.[SCENE3D_METADATA_KEY] as Scene3dManifest | undefined) ?? null;
+    // Straight from the stylesheet MapLibre keeps: this runs on every styledata (every whole degree of
+    // tilt, see syncPitch), and getStyle() clones every layer. getStyle() only as a fallback.
+    const sheet = (this.map as unknown as { style?: { stylesheet?: { metadata?: unknown } } } | undefined)?.style?.stylesheet;
+    const metadata = (sheet ? sheet.metadata : this.map?.getStyle()?.metadata) as Record<string, unknown> | undefined;
+    return (metadata?.[SCENE3D_METADATA_KEY] as Scene3dManifest | undefined) ?? null;
   }
 
   private refresh() {
@@ -309,6 +346,8 @@ export class Scene3dControl extends Evented<Scene3dControlEventType> implements 
       this.teardown(true);
       const generation = ++this.generation;
       let scene = this.currentScene();
+      this.sceneRef = scene;
+      this.sceneKey = sceneKeyOf(scene);
       if (scene && scene.version !== 1) {
         this.warnOnce(`version-${String(scene.version)}`, `Scene3dControl: unsupported scene version ${String(scene.version)}`);
         scene = null;
@@ -340,11 +379,11 @@ export class Scene3dControl extends Evented<Scene3dControlEventType> implements 
     return position === "top" ? undefined : anchor;
   }
 
-  private addNative(scene: Scene3dManifest) {
+  /** The buildings source and the native layers, before `anchor` (default: under the labels). */
+  private addNative(scene: Scene3dManifest, anchor = this.labelsAnchor()) {
     const map = this.map!;
     const source = this.sourceId();
     if (!map.getSource(source)) map.addSource(source, { type: "vector", url: this.withKey(scene.source) });
-    const anchor = this.labelsAnchor();
     const p = this.options.idPrefix;
     if (scene.lod1) {
       const { position, ...lod1 } = scene.lod1;
@@ -357,6 +396,32 @@ export class Scene3dControl extends Evented<Scene3dControlEventType> implements 
         this.beforeFor(scene.fill3d.position, anchor),
       );
       this.native.push(`${p}consumer`);
+    }
+  }
+
+  /** After a diffed setStyle with the same scene: put back the source and native layers, keep the 3D layers. */
+  private restoreNative() {
+    const map = this.map!;
+    const scene = this.scene!;
+    this.building = true;
+    try {
+      for (const id of this.native) if (map.getLayer(id)) map.removeLayer(id);
+      this.native = [];
+      // The new style set its own visibility on the layers we hide; remember that one.
+      this.hidden.clear();
+      // Under the 3D layers again, as in a full build.
+      this.addNative(scene, this.custom.find((l) => !this.topIds.has(l.id))?.id ?? this.labelsAnchor());
+      if (scene.lod1 || scene.fill3d) {
+        if (this.sourceOk) this.hideStyleLayers();
+        else {
+          this.stopWaiting?.();
+          this.hideOnceBuildingsLoad(this.generation);
+        }
+      }
+      this.pitch = null;
+      this.syncPitch();
+    } finally {
+      this.building = false;
     }
   }
 
@@ -378,6 +443,7 @@ export class Scene3dControl extends Evented<Scene3dControlEventType> implements 
     const add = (layer: CustomLayerInterface, position: Scene3dPosition | undefined) => {
       map.addLayer(layer, this.beforeFor(position, anchor));
       this.custom.push(layer);
+      if (position === "top") this.topIds.add(layer.id);
     };
     this.building = true;
     try {
@@ -410,6 +476,7 @@ export class Scene3dControl extends Evented<Scene3dControlEventType> implements 
       else if (map) layer.onRemove?.(map, undefined as unknown as WebGL2RenderingContext);
     }
     this.custom = [];
+    this.topIds.clear();
   }
 
   /** Remove everything the control added; `restore` puts hidden style layers back. */
@@ -429,6 +496,7 @@ export class Scene3dControl extends Evented<Scene3dControlEventType> implements 
       this.native = [];
       this.hidden.clear();
       this.scene = null;
+      this.sourceOk = false;
     } finally {
       this.building = false;
     }
@@ -445,7 +513,9 @@ export class Scene3dControl extends Evented<Scene3dControlEventType> implements 
       // removeSource fires a metadata event too; the source is gone by then.
       if (e.sourceId !== id || e.sourceDataType !== "metadata" || !map.getSource(id)) return;
       this.stopWaiting?.();
-      if (generation === this.generation && this.styleReady()) this.hideStyleLayers();
+      if (generation !== this.generation || !this.styleReady()) return;
+      this.sourceOk = true;
+      this.hideStyleLayers();
     };
     map.on("sourcedata", onData);
     this.stopWaiting = () => {
