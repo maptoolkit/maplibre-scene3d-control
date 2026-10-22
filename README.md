@@ -10,7 +10,7 @@ Maptoolkit styles name their scene in `metadata["maptoolkit:scene3d"]`. The cont
 - adds the buildings source with your API key,
 - puts the layers under the style's labels,
 - keeps the tilt in the global state `pitch`, which the scene's opacity fades read,
-- rebuilds the layers after a style or terrain change,
+- rebuilds the layers after a style or terrain change; a diffed `setStyle` that keeps the scene only puts back what the diff dropped and keeps the 3D layers,
 - loads the 3D library (with three.js) only once the map reaches zoom 12.
 
 ## Install
@@ -78,13 +78,13 @@ The package is ESM-only. With an [import map](https://developer.mozilla.org/en-U
 
 ## Methods
 
-| Method                           | Description                                                                                             |
-| -------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `setScene(scene)`                | Show another scene: a manifest, its URL, `null` for none, or `undefined` to go back to the style's own. |
-| `getScene()`                     | The scene shown now, or `null`.                                                                         |
-| `setEnabled(on)` / `isEnabled()` | Switch the scene on or off.                                                                             |
-| `getLayers()`                    | The maplibre-3d-layers layers on the map, e.g. to drive them frame by frame.                            |
-| `loadLibrary()` / `getLibrary()` | Load the 3D library now instead of at `minzoom`; the loaded library.                                    |
+| Method                           | Description                                                                                                                                    |
+| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `setScene(scene)`                | Show another scene: a manifest, its URL, `null` for none, or `undefined` to go back to the style's own. The same scene again keeps the layers. |
+| `getScene()`                     | The scene shown now, or `null`.                                                                                                                |
+| `setEnabled(on)` / `isEnabled()` | Switch the scene on or off.                                                                                                                    |
+| `getLayers()`                    | The maplibre-3d-layers layers on the map, e.g. to drive them frame by frame.                                                                   |
+| `loadLibrary()` / `getLibrary()` | Load the 3D library now instead of at `minzoom`; the loaded library.                                                                           |
 
 ## Events
 
@@ -108,6 +108,8 @@ All values are plain MapLibre or maplibre-3d-layers options. Maptoolkit styles g
 ```
 
 Every part is optional except `version` and `source`. A layer goes under the style's labels unless it says `position: "top"`. Vegetation needs the source it names in the style (`mtk` in Maptoolkit styles); a layer whose source the style lacks is left out with a warning.
+
+MapLibre ignores a diffed `setStyle` that changes nothing but the metadata. A scene that changes on its own, with the rest of the style unchanged, therefore never reaches the control that way: pass it with `setScene()` or use `setStyle` with `diff: false`.
 
 ## Requirements
 
