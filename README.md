@@ -64,17 +64,17 @@ The package is ESM-only. With an [import map](https://developer.mozilla.org/en-U
 
 ## Options
 
-| Option       | Type                                | Default                                       | Description                                                                                                      |
-| ------------ | ----------------------------------- | --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `apiKey`     | `string`                            | —                                             | Maptoolkit API key, added to the buildings source URL as `api_key`. Without it the buildings source answers 403. |
-| `scene`      | `Scene3dManifest \| string \| null` | the style's                                   | A scene (or its URL) to show instead of the style's own; `null` shows none.                                      |
-| `enabled`    | `boolean`                           | `true`                                        | Show the scene right away.                                                                                       |
-| `button`     | `boolean`                           | `false`                                       | Add a 3D button that switches the scene on and off. Without it the control has no UI.                            |
-| `minzoom`    | `number`                            | `12`                                          | Zoom from which the 3D library is loaded. The buildings source has no tiles below 12.                            |
-| `hideLayers` | `string[]`                          | `["building_3d", "building_3d_multicolored"]` | Style layers hidden while the scene is shown, e.g. a style's own 3D buildings.                                   |
-| `modelBase`  | `string`                            | document base URL                             | Base for relative model URLs.                                                                                    |
-| `library`    | `() => Promise<Scene3dLibrary>`     | `import("@maptoolkit/maplibre-3d-layers")`    | Loads the 3D library, e.g. from a CDN.                                                                           |
-| `idPrefix`   | `string`                            | `"scene3d-"`                                  | Prefix of the source and layer ids the control adds.                                                             |
+| Option       | Type                                | Default                                       | Description                                                                                                                                                                                   |
+| ------------ | ----------------------------------- | --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apiKey`     | `string`                            | —                                             | Maptoolkit API key, added to the buildings source URL as `api_key`. Without it the buildings source answers 403.                                                                              |
+| `scene`      | `Scene3dManifest \| string \| null` | the style's                                   | A scene (or its URL) to show instead of the style's own; `null` shows none.                                                                                                                   |
+| `enabled`    | `boolean`                           | `true`                                        | Show the scene right away.                                                                                                                                                                    |
+| `button`     | `boolean`                           | `false`                                       | Add a 3D button that switches the scene on and off. Without it the control has no UI.                                                                                                         |
+| `minzoom`    | `number`                            | `12`                                          | Zoom from which the 3D library is loaded. The buildings source has no tiles below 12.                                                                                                         |
+| `hideLayers` | `string[]`                          | `["building_3d", "building_3d_multicolored"]` | Style layers hidden while the scene's buildings are shown, e.g. a style's own 3D buildings. Hidden only once the buildings source has loaded: without a working API key the style keeps them. |
+| `modelBase`  | `string`                            | document base URL                             | Base for relative model URLs.                                                                                                                                                                 |
+| `library`    | `() => Promise<Scene3dLibrary>`     | `import("@maptoolkit/maplibre-3d-layers")`    | Loads the 3D library, e.g. from a CDN.                                                                                                                                                        |
+| `idPrefix`   | `string`                            | `"scene3d-"`                                  | Prefix of the source and layer ids the control adds.                                                                                                                                          |
 
 ## Methods
 

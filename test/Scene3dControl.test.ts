@@ -19,7 +19,7 @@ type Layer = { id: string; type: string; layout?: Record<string, unknown>; [k: s
 
 /** A stand-in for maplibre-gl's Map with just what the control touches. */
 function createMap({ metadata = { [SCENE3D_METADATA_KEY]: SCENE } as Record<string, unknown>, zoom = 16, pitch = 60 } = {}) {
-  const listeners = new Map<string, Set<() => void>>();
+  const listeners = new Map<string, Set<(e?: unknown) => void>>();
   let style = { _loaded: true };
   let layers: Layer[] = [
     { id: "background", type: "background" },
@@ -34,8 +34,8 @@ function createMap({ metadata = { [SCENE3D_METADATA_KEY]: SCENE } as Record<stri
     get style() {
       return style;
     },
-    on: (t: string, f: () => void) => void (listeners.get(t) ?? listeners.set(t, new Set()).get(t)!).add(f),
-    off: (t: string, f: () => void) => void listeners.get(t)?.delete(f),
+    on: (t: string, f: (e?: unknown) => void) => void (listeners.get(t) ?? listeners.set(t, new Set()).get(t)!).add(f),
+    off: (t: string, f: (e?: unknown) => void) => void listeners.get(t)?.delete(f),
     fire: (t: string) => listeners.get(t)?.forEach((f) => f()),
     getStyle: () => ({ version: 8, sources: {}, layers: layers.map(({ id, type }) => ({ id, type })), metadata }),
     getLayer: (id: string) => layers.find((l) => l.id === id),
@@ -64,6 +64,8 @@ function createMap({ metadata = { [SCENE3D_METADATA_KEY]: SCENE } as Record<stri
     getContainer: () => document.createElement("div"),
     // test helpers
     globalState,
+    /** The source's TileJSON arrived, as MapLibre reports it. */
+    loadSource: (id: string) => listeners.get("sourcedata")?.forEach((f) => f({ sourceId: id, sourceDataType: "metadata" })),
     ids: () => layers.map((l) => l.id),
     newStyle: (next: Layer[], nextMetadata: Record<string, unknown> = {}) => {
       style = { _loaded: true };
@@ -129,7 +131,7 @@ describe("Scene3dControl", () => {
     expect(control.getScene()).toBe(SCENE);
   });
 
-  it("leaves out vegetation whose source the style lacks, and hides the style's own 3D buildings", async () => {
+  it("leaves out vegetation whose source the style lacks, and hides the style's own 3D buildings once its source loads", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const map = createMap();
     const control = new Scene3dControl({ library: fakeLibrary().load });
@@ -137,11 +139,36 @@ describe("Scene3dControl", () => {
     await flush();
     expect(map.ids()).not.toContain("scene3d-elsewhere");
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('no source "other"'));
+    expect(map.getLayoutProperty("building_3d", "visibility")).toBeUndefined(); // TileJSON not there yet
+    map.loadSource("mtk");
+    expect(map.getLayoutProperty("building_3d", "visibility")).toBeUndefined(); // another source
+    map.loadSource("scene3d-buildings");
     expect(map.getLayoutProperty("building_3d", "visibility")).toBe("none");
     control.onRemove();
     expect(map.getLayoutProperty("building_3d", "visibility")).toBe("visible");
     expect(map.ids().some((id) => id.startsWith("scene3d-"))).toBe(false);
     warn.mockRestore();
+  });
+
+  it("keeps the style's own 3D buildings while the buildings source does not load (missing or wrong API key)", async () => {
+    const map = createMap();
+    const control = new Scene3dControl({ library: fakeLibrary().load });
+    control.onAdd(map);
+    await flush();
+    // MapLibre answers a 403 on the TileJSON with an error event, never with the metadata event.
+    expect(map.getLayoutProperty("building_3d", "visibility")).toBeUndefined();
+    control.onRemove();
+    map.loadSource("scene3d-buildings"); // a late answer after removal changes nothing
+    expect(map.getLayoutProperty("building_3d", "visibility")).toBeUndefined();
+  });
+
+  it("hides nothing for a scene without buildings", async () => {
+    const map = createMap({ metadata: { [SCENE3D_METADATA_KEY]: { ...SCENE, lod1: undefined, fill3d: undefined } } });
+    const control = new Scene3dControl({ library: fakeLibrary().load });
+    control.onAdd(map);
+    await flush();
+    map.loadSource("scene3d-buildings");
+    expect(map.getLayoutProperty("building_3d", "visibility")).toBeUndefined();
   });
 
   it("keeps the tilt in the global state pitch", () => {

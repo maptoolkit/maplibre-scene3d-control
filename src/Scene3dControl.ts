@@ -1,5 +1,5 @@
 import { Evented } from "maplibre-gl";
-import type { ControlPosition, CustomLayerInterface, FilterSpecification, IControl, Map as MaplibreMap, MapLibreEvent } from "maplibre-gl";
+import type { ControlPosition, CustomLayerInterface, FilterSpecification, IControl, Map as MaplibreMap, MapLibreEvent, MapSourceDataEvent } from "maplibre-gl";
 
 /** Root metadata key under which a Maptoolkit style carries its 3D scene. */
 export const SCENE3D_METADATA_KEY = "maptoolkit:scene3d";
@@ -68,7 +68,11 @@ export interface Scene3dControlOptions {
   button?: boolean;
   /** The 3D library is loaded once the map reaches this zoom; the buildings source has no tiles below 12 (default `12`). */
   minzoom?: number;
-  /** Style layers hidden while the scene is shown, e.g. a style's own 3D buildings (default the v2 ids `building_3d`, `building_3d_multicolored`). */
+  /**
+   * Style layers hidden while the scene's buildings are shown, e.g. a style's own 3D buildings (default the v2 ids
+   * `building_3d`, `building_3d_multicolored`). Hidden only once the buildings source has loaded, so without a working
+   * API key the style keeps them.
+   */
   hideLayers?: string[];
   /** Base for relative model URLs (default the document's base URL). */
   modelBase?: string;
@@ -129,6 +133,8 @@ export class Scene3dControl extends Evented<Scene3dControlEventType> implements 
   private building = false;
   private generation = 0;
   private warned = new Set<string>();
+  /** Stops waiting for the buildings source (see hideOnceBuildingsLoad). */
+  private stopWaiting?: () => void;
 
   constructor(options: Scene3dControlOptions = {}) {
     super();
@@ -310,7 +316,7 @@ export class Scene3dControl extends Evented<Scene3dControlEventType> implements 
       this.scene = scene;
       if (scene) {
         this.syncPitch();
-        this.hideStyleLayers();
+        if (scene.lod1 || scene.fill3d) this.hideOnceBuildingsLoad(generation);
         this.addNative(scene);
         if (this.lib) this.addCustom(scene, generation);
         else if (map.getZoom() >= this.options.minzoom) this.loadCustom(scene, generation);
@@ -409,6 +415,7 @@ export class Scene3dControl extends Evented<Scene3dControlEventType> implements 
   /** Remove everything the control added; `restore` puts hidden style layers back. */
   private teardown(restore: boolean) {
     const map = this.map;
+    this.stopWaiting?.();
     this.building = true;
     try {
       this.removeCustom();
@@ -425,6 +432,26 @@ export class Scene3dControl extends Evented<Scene3dControlEventType> implements 
     } finally {
       this.building = false;
     }
+  }
+
+  /**
+   * Hide the style's own 3D buildings (`hideLayers`) only once the scene's buildings source has
+   * loaded. Without a working API key it answers 403, and the style keeps its buildings.
+   */
+  private hideOnceBuildingsLoad(generation: number) {
+    const map = this.map!;
+    const id = this.sourceId();
+    const onData = (e: MapSourceDataEvent) => {
+      // removeSource fires a metadata event too; the source is gone by then.
+      if (e.sourceId !== id || e.sourceDataType !== "metadata" || !map.getSource(id)) return;
+      this.stopWaiting?.();
+      if (generation === this.generation && this.styleReady()) this.hideStyleLayers();
+    };
+    map.on("sourcedata", onData);
+    this.stopWaiting = () => {
+      map.off("sourcedata", onData);
+      this.stopWaiting = undefined;
+    };
   }
 
   private hideStyleLayers() {
