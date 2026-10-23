@@ -7,7 +7,7 @@ A [MapLibre GL JS](https://maplibre.org/maplibre-gl-js/docs/) control plugin tha
 
 Maptoolkit styles name their scene in `metadata["maptoolkit:scene3d"]`. The control reads it whenever the style changes, so switching styles switches the scene. It draws the buildings with a `fill-extrusion` plus [`@maptoolkit/maplibre-3d-layers`](https://www.npmjs.com/package/@maptoolkit/maplibre-3d-layers) (`Fill3DLayer`, `GltfLayer`) and takes care of the rest:
 
-- adds the buildings source with your API key,
+- adds the buildings source with your API key (only for a scene with buildings),
 - puts the layers under the style's labels,
 - keeps the tilt in the global state `pitch`, which the scene's opacity fades read,
 - rebuilds the layers after a style or terrain change; a diffed `setStyle` that keeps the scene only puts back what the diff dropped and keeps the 3D layers,

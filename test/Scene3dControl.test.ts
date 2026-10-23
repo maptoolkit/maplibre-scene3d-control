@@ -192,13 +192,21 @@ describe("Scene3dControl", () => {
     expect(map.getLayoutProperty("building_3d", "visibility")).toBeUndefined();
   });
 
-  it("hides nothing for a scene without buildings", async () => {
+  it("adds no buildings source and hides nothing for a scene without buildings", async () => {
     const map = createMap({ metadata: { [SCENE3D_METADATA_KEY]: { ...SCENE, lod1: undefined, fill3d: undefined } } });
     const control = new Scene3dControl({ library: fakeLibrary().load });
     control.onAdd(map);
     await flush();
+    expect(map.addSource).not.toHaveBeenCalled();
+    expect(map.ids()).toContain("scene3d-trees");
     map.loadSource("scene3d-buildings");
     expect(map.getLayoutProperty("building_3d", "visibility")).toBeUndefined();
+    // a diffed setStyle with the same trees-only scene keeps it as it is
+    const count = map.ids().length;
+    map.diffStyle(baseLayers(), { [SCENE3D_METADATA_KEY]: { ...SCENE, lod1: undefined, fill3d: undefined } });
+    await flush();
+    expect(map.addSource).not.toHaveBeenCalled();
+    expect(map.ids()).toHaveLength(count);
   });
 
   it("keeps the tilt in the global state pitch", () => {

@@ -105,6 +105,8 @@ type StyleHandle = { _loaded?: boolean } | undefined;
 const styleOf = (map: MaplibreMap) => (map as unknown as { style?: StyleHandle }).style;
 /** Compares scenes across style updates: the metadata comes as a new object each time. */
 const sceneKeyOf = (scene: Scene3dManifest | null) => (scene ? JSON.stringify(scene) : null);
+/** Whether a scene draws buildings, i.e. needs its buildings source. */
+const hasBuildings = (scene: Scene3dManifest) => !!(scene.lod1 || scene.fill3d);
 
 /**
  * A MapLibre GL JS control plugin that adds the 3D scene of a Maptoolkit style: 3D buildings
@@ -297,7 +299,7 @@ export class Scene3dControl extends Evented<Scene3dControlEventType> implements 
     }
     if (!this.scene) return;
     if (this.custom.some((l) => !map.getLayer(l.id))) this.refresh();
-    else if (this.native.some((id) => !map.getLayer(id)) || !map.getSource(this.sourceId())) this.restoreNative();
+    else if (this.native.some((id) => !map.getLayer(id)) || (hasBuildings(this.scene) && !map.getSource(this.sourceId()))) this.restoreNative();
     else this.syncPitch();
   }
 
@@ -355,7 +357,7 @@ export class Scene3dControl extends Evented<Scene3dControlEventType> implements 
       this.scene = scene;
       if (scene) {
         this.syncPitch();
-        if (scene.lod1 || scene.fill3d) this.hideOnceBuildingsLoad(generation);
+        if (hasBuildings(scene)) this.hideOnceBuildingsLoad(generation);
         this.addNative(scene);
         if (this.lib) this.addCustom(scene, generation);
         else if (map.getZoom() >= this.options.minzoom) this.loadCustom(scene, generation);
@@ -383,6 +385,7 @@ export class Scene3dControl extends Evented<Scene3dControlEventType> implements 
   private addNative(scene: Scene3dManifest, anchor = this.labelsAnchor()) {
     const map = this.map!;
     const source = this.sourceId();
+    if (!hasBuildings(scene)) return; // trees only: no buildings source to load (or to answer 403 without a key)
     if (!map.getSource(source)) map.addSource(source, { type: "vector", url: this.withKey(scene.source) });
     const p = this.options.idPrefix;
     if (scene.lod1) {
@@ -411,7 +414,7 @@ export class Scene3dControl extends Evented<Scene3dControlEventType> implements 
       this.hidden.clear();
       // Under the 3D layers again, as in a full build.
       this.addNative(scene, this.custom.find((l) => !this.topIds.has(l.id))?.id ?? this.labelsAnchor());
-      if (scene.lod1 || scene.fill3d) {
+      if (hasBuildings(scene)) {
         if (this.sourceOk) this.hideStyleLayers();
         else {
           this.stopWaiting?.();
