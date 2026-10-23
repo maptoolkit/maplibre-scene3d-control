@@ -1,6 +1,6 @@
 {
   "name": "@maptoolkit/maplibre-scene3d-control",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "A MapLibre GL JS control plugin that adds the 3D scene of a Maptoolkit style: 3D buildings and glTF vegetation.",
   "repository": {
     "type": "git",
