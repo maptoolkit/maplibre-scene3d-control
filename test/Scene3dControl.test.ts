@@ -42,6 +42,7 @@ function createMap({ metadata = { [SCENE3D_METADATA_KEY]: SCENE } as Record<stri
   let layers: Layer[] = baseLayers();
   const sources = new Set(["mtk"]);
   const globalState: Record<string, unknown> = {};
+  let terrain: { source: string; exaggeration?: number } | null = null;
   const map = {
     get style() {
       return style;
@@ -72,6 +73,12 @@ function createMap({ metadata = { [SCENE3D_METADATA_KEY]: SCENE } as Record<stri
       listeners.get("pitch")?.forEach((f) => f());
     },
     getZoom: () => zoom,
+    getTerrain: () => terrain,
+    // Like MapLibre: fires `terrain` on every call, also with the same options.
+    setTerrain: (t: { source: string; exaggeration?: number } | null) => {
+      terrain = t;
+      listeners.get("terrain")?.forEach((f) => f());
+    },
     setGlobalStateProperty: (k: string, v: unknown) => void (globalState[k] = v),
     getContainer: () => document.createElement("div"),
     // test helpers
@@ -192,13 +199,39 @@ describe("Scene3dControl", () => {
     expect(map.getLayoutProperty("building_3d", "visibility")).toBeUndefined();
   });
 
-  it("hides nothing for a scene without buildings", async () => {
+  it("adds no buildings source and hides nothing for a scene without buildings", async () => {
     const map = createMap({ metadata: { [SCENE3D_METADATA_KEY]: { ...SCENE, lod1: undefined, fill3d: undefined } } });
     const control = new Scene3dControl({ library: fakeLibrary().load });
     control.onAdd(map);
     await flush();
+    expect(map.addSource).not.toHaveBeenCalled();
+    expect(map.ids()).toContain("scene3d-trees");
     map.loadSource("scene3d-buildings");
     expect(map.getLayoutProperty("building_3d", "visibility")).toBeUndefined();
+    // a diffed setStyle with the same trees-only scene keeps it as it is
+    const count = map.ids().length;
+    map.diffStyle(baseLayers(), { [SCENE3D_METADATA_KEY]: { ...SCENE, lod1: undefined, fill3d: undefined } });
+    await flush();
+    expect(map.addSource).not.toHaveBeenCalled();
+    expect(map.ids()).toHaveLength(count);
+  });
+
+  it("rebuilds the 3D layers for a terrain change only, not for the same terrain set again", async () => {
+    const map = createMap();
+    const { load, made } = fakeLibrary();
+    new Scene3dControl({ library: load }).onAdd(map);
+    await flush();
+    const perBuild = made.length; // the 3D layers of one build
+    const builds = () => made.length / perBuild;
+    map.setTerrain({ source: "dem", exaggeration: 1 }); // terrain on
+    expect(builds()).toBe(2);
+    map.setTerrain({ source: "dem", exaggeration: 1 }); // the same again, e.g. after every style update
+    map.setTerrain({ source: "dem", exaggeration: 1 });
+    expect(builds()).toBe(2);
+    map.setTerrain({ source: "dem", exaggeration: 1.5 }); // exaggeration changed
+    expect(builds()).toBe(3);
+    map.setTerrain(null); // terrain off
+    expect(builds()).toBe(4);
   });
 
   it("keeps the tilt in the global state pitch", () => {
