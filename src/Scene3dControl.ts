@@ -105,6 +105,9 @@ type StyleHandle = { _loaded?: boolean } | undefined;
 const styleOf = (map: MaplibreMap) => (map as unknown as { style?: StyleHandle }).style;
 /** Compares scenes across style updates: the metadata comes as a new object each time. */
 const sceneKeyOf = (scene: Scene3dManifest | null) => (scene ? JSON.stringify(scene) : null);
+/** Source and exaggeration of a terrain, to tell a real change from a repeated setTerrain. */
+const terrainKeyOf = (terrain: { source: string; exaggeration?: number } | null | undefined) =>
+  terrain ? `${terrain.source}|${terrain.exaggeration ?? 1}` : null;
 /** Whether a scene draws buildings, i.e. needs its buildings source. */
 const hasBuildings = (scene: Scene3dManifest) => !!(scene.lod1 || scene.fill3d);
 
@@ -146,6 +149,8 @@ export class Scene3dControl extends Evented<Scene3dControlEventType> implements 
   private sourceOk = false;
   /** Custom layers added with `position: "top"`. */
   private topIds = new Set<string>();
+  /** The terrain the 3D layers were built with (source and exaggeration), see onTerrain. */
+  private terrainKey: string | null = null;
 
   constructor(options: Scene3dControlOptions = {}) {
     super();
@@ -303,9 +308,13 @@ export class Scene3dControl extends Evented<Scene3dControlEventType> implements 
     else this.syncPitch();
   }
 
-  // The 3D layers take the terrain as it is when they are added.
+  // The 3D layers take the terrain source and exaggeration as they are when they are added (heights
+  // are sampled from the current terrain each pass). MapLibre fires `terrain` on every setTerrain, also
+  // with the same options; rebuilding then would restart model loading each time (an app re-applying
+  // its terrain after every style update kept the models loading for good).
   private onTerrain = () => {
     if (!this.map || !this.styleReady() || !this.custom.length || !this.scene) return;
+    if (terrainKeyOf(this.map.getTerrain()) === this.terrainKey) return;
     this.removeCustom();
     this.addCustom(this.scene, this.generation);
   };
@@ -443,6 +452,7 @@ export class Scene3dControl extends Evented<Scene3dControlEventType> implements 
     if (!map || !lib || generation !== this.generation || !this.styleReady()) return;
     const anchor = this.labelsAnchor();
     const p = this.options.idPrefix;
+    this.terrainKey = terrainKeyOf(map.getTerrain());
     const add = (layer: CustomLayerInterface, position: Scene3dPosition | undefined) => {
       map.addLayer(layer, this.beforeFor(position, anchor));
       this.custom.push(layer);
