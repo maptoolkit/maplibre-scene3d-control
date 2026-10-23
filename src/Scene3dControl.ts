@@ -4,8 +4,13 @@ import type { ControlPosition, CustomLayerInterface, FilterSpecification, IContr
 /** Root metadata key under which a Maptoolkit style carries its 3D scene. */
 export const SCENE3D_METADATA_KEY = "maptoolkit:scene3d";
 
-/** Where a layer of the scene goes: under the style's labels (default) or on top of everything. */
-export type Scene3dPosition = "below-labels" | "top";
+/**
+ * Where a layer of the scene goes: under the style's labels (`"below-labels"`, the default: right below its first
+ * symbol layer), on top of everything (`"top"`), or right below the style layer with that id. The position only
+ * decides what draws over the 3D among symbol layers (labels, icons); fills and lines always end up under it. A
+ * layer id the style lacks falls back to `"below-labels"`.
+ */
+export type Scene3dPosition = "below-labels" | "top" | (string & {});
 
 type Expression = unknown;
 
@@ -147,8 +152,8 @@ export class Scene3dControl extends Evented<Scene3dControlEventType> implements 
   private sceneKey: string | null = null;
   /** Whether the buildings source of the current scene has loaded (its TileJSON answered). */
   private sourceOk = false;
-  /** Custom layers added with `position: "top"`. */
-  private topIds = new Set<string>();
+  /** The position each custom layer was added with (`"below-labels"` when the scene names none). */
+  private customPosition = new Map<string, Scene3dPosition>();
   /** The terrain the 3D layers were built with (source and exaggeration), see onTerrain. */
   private terrainKey: string | null = null;
 
@@ -386,26 +391,36 @@ export class Scene3dControl extends Evented<Scene3dControlEventType> implements 
     return this.map?.getStyle().layers.find((l) => l.type === "symbol" && !l.id.startsWith(this.options.idPrefix))?.id;
   }
 
+  /** The layer a scene layer goes below for `position`: none for "top", the style layer it names, else `anchor`. */
   private beforeFor(position: Scene3dPosition | undefined, anchor: string | undefined) {
-    return position === "top" ? undefined : anchor;
+    if (position === "top") return undefined;
+    if (!position || position === "below-labels") return anchor;
+    if (!position.startsWith(this.options.idPrefix) && this.map?.getLayer(position)) return position;
+    this.warnOnce(`position-${position}`, `Scene3dControl: the style has no layer "${position}", the scene goes under the labels`);
+    return anchor;
   }
 
-  /** The buildings source and the native layers, before `anchor` (default: under the labels). */
-  private addNative(scene: Scene3dManifest, anchor = this.labelsAnchor()) {
+  /**
+   * The buildings source and the native layers, each below the layer its position names. `place` can pick another
+   * layer for a position (restoreNative: the 3D layers with the same position).
+   */
+  private addNative(scene: Scene3dManifest, place = (_position: Scene3dPosition, before: string | undefined) => before) {
     const map = this.map!;
     const source = this.sourceId();
     if (!hasBuildings(scene)) return; // trees only: no buildings source to load (or to answer 403 without a key)
     if (!map.getSource(source)) map.addSource(source, { type: "vector", url: this.withKey(scene.source) });
     const p = this.options.idPrefix;
+    const anchor = this.labelsAnchor();
+    const before = (position: Scene3dPosition | undefined) => place(position ?? "below-labels", this.beforeFor(position, anchor));
     if (scene.lod1) {
       const { position, ...lod1 } = scene.lod1;
-      map.addLayer({ id: `${p}lod1`, type: "fill-extrusion", source, "source-layer": "buildings2d", ...lod1 } as never, this.beforeFor(position, anchor));
+      map.addLayer({ id: `${p}lod1`, type: "fill-extrusion", source, "source-layer": "buildings2d", ...lod1 } as never, before(position));
       this.native.push(`${p}lod1`);
     } else if (scene.fill3d) {
       // The Fill3DLayer reads tiles MapLibre only loads for a source a style layer uses.
       map.addLayer(
         { id: `${p}consumer`, type: "fill", source, "source-layer": "buildings2d", filter: ["boolean", false], paint: { "fill-opacity": 0 } },
-        this.beforeFor(scene.fill3d.position, anchor),
+        before(scene.fill3d.position),
       );
       this.native.push(`${p}consumer`);
     }
@@ -421,8 +436,8 @@ export class Scene3dControl extends Evented<Scene3dControlEventType> implements 
       this.native = [];
       // The new style set its own visibility on the layers we hide; remember that one.
       this.hidden.clear();
-      // Under the 3D layers again, as in a full build.
-      this.addNative(scene, this.custom.find((l) => !this.topIds.has(l.id))?.id ?? this.labelsAnchor());
+      // Under the 3D layers with the same position again, as in a full build.
+      this.addNative(scene, (position, before) => this.custom.find((l) => this.customPosition.get(l.id) === position)?.id ?? before);
       if (hasBuildings(scene)) {
         if (this.sourceOk) this.hideStyleLayers();
         else {
@@ -456,7 +471,7 @@ export class Scene3dControl extends Evented<Scene3dControlEventType> implements 
     const add = (layer: CustomLayerInterface, position: Scene3dPosition | undefined) => {
       map.addLayer(layer, this.beforeFor(position, anchor));
       this.custom.push(layer);
-      if (position === "top") this.topIds.add(layer.id);
+      this.customPosition.set(layer.id, position ?? "below-labels");
     };
     this.building = true;
     try {
@@ -489,7 +504,7 @@ export class Scene3dControl extends Evented<Scene3dControlEventType> implements 
       else if (map) layer.onRemove?.(map, undefined as unknown as WebGL2RenderingContext);
     }
     this.custom = [];
-    this.topIds.clear();
+    this.customPosition.clear();
   }
 
   /** Remove everything the control added; `restore` puts hidden style layers back. */
