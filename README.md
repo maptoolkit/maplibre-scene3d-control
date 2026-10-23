@@ -107,7 +107,7 @@ All values are plain MapLibre or maplibre-3d-layers options. Maptoolkit styles g
 }
 ```
 
-Every part is optional except `version` and `source`. A layer goes under the style's labels unless it says `position: "top"`. Vegetation needs the source it names in the style (`mtk` in Maptoolkit styles); a layer whose source the style lacks is left out with a warning.
+Every part is optional except `version` and `source`. `position` (on `lod1`, `fill3d` and every `gltf` layer) decides where a layer goes: under the style's labels by default (`"below-labels"`, right below the style's first symbol layer), on top of everything with `"top"`, or right below the style layer whose id it names, e.g. `position: "water_waterway_label_rank_4"`. A layer id the style lacks falls back to under the labels, with a console warning. The position only matters against symbol layers (labels, icons): fills and lines always end up under the 3D layers. Vegetation needs the source it names in the style (`mtk` in Maptoolkit styles); a layer whose source the style lacks is left out with a warning.
 
 MapLibre ignores a diffed `setStyle` that changes nothing but the metadata. A scene that changes on its own, with the rest of the style unchanged, therefore never reaches the control that way: pass it with `setScene()` or use `setStyle` with `diff: false`.
 

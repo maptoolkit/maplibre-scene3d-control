@@ -168,6 +168,30 @@ describe("Scene3dControl", () => {
     expect(control.getScene()).toBe(SCENE);
   });
 
+  it("puts a layer right below the style layer its position names, under the labels when the style lacks it", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const scene: Scene3dManifest = {
+      ...SCENE,
+      lod1: { ...SCENE.lod1, position: "place_label" },
+      fill3d: { ...SCENE.fill3d, position: "place_label" },
+      gltf: [{ id: "trees", models: ["tree"], source: "mtk", "source-layer": "natural", position: "no_such_layer" }],
+    };
+    const map = createMap({ metadata: { [SCENE3D_METADATA_KEY]: scene } });
+    const { load } = fakeLibrary();
+    new Scene3dControl({ library: load }).onAdd(map);
+    await flush();
+    expect(map.ids()).toEqual(["background", "building_3d", "road", "scene3d-trees", "road_label", "scene3d-lod1", "scene3d-fill3d", "place_label"]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('"no_such_layer"'));
+
+    // A diffed setStyle with the same scene puts LOD1 back where it was: under the Fill3D layer of the same position.
+    map.loadSource("scene3d-buildings");
+    const before = map.ids();
+    map.diffStyle(baseLayers(), { [SCENE3D_METADATA_KEY]: structuredClone(scene) });
+    await flush();
+    expect(map.ids()).toEqual(before);
+    warn.mockRestore();
+  });
+
   it("leaves out vegetation whose source the style lacks, and hides the style's own 3D buildings once its source loads", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const map = createMap();
