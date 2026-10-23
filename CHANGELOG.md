@@ -1,5 +1,12 @@
 # @maptoolkit/maplibre-scene3d-control
 
+## 0.1.2
+
+### Patch Changes
+
+- ff58a0e: A scene without buildings (trees only) no longer adds the buildings source, so it costs no TileJSON request and logs no 403 when the app has no key for it.
+- ff58a0e: The 3D layers are rebuilt on a real terrain change only (source or exaggeration), not on every `terrain` event: MapLibre fires one for every `setTerrain`, also with the same options, and an app that re-applies its terrain after each style update kept the glTF models loading for good.
+
 ## 0.1.1
 
 ### Patch Changes
