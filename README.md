@@ -138,6 +138,8 @@ npm run typecheck
 npm run build
 ```
 
+Releases go through changesets: a merge to `main` with a changeset opens "Version Packages", and merging that publishes. A release of `@maptoolkit/maplibre-3d-layers` needs no hand: [`bump-maptoolkit-packages.yml`](.github/workflows/bump-maptoolkit-packages.yml) opens a PR that raises the bundled version and versions the control in one go (same bump level as the library), merges it once CI is green, and the merge publishes the control and notifies its consumers.
+
 ## License
 
 BSD-3-Clause
