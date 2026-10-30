@@ -16,5 +16,5 @@
     "noFallthroughCasesInSwitch": true,
     "declaration": true
   },
-  "include": ["src", "test", "vite.config.mts", "vitest.config.mts"]
+  "include": ["src", "test", "vite.config.mts", "vite.standalone.config.mts", "vitest.config.mts"]
 }
