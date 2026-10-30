@@ -12,7 +12,8 @@ export default defineConfig({
       formats: ["es"],
     },
     rollupOptions: {
-      // maplibre-3d-layers (and three.js behind it) is loaded on demand, see Scene3dControlOptions.library
+      // maplibre-3d-layers (and three.js behind it) is a dependency the control loads on demand, see
+      // Scene3dControlOptions.library; the standalone build (vite.standalone.config.mts) ships its own copy
       external: ["maplibre-gl", "@maptoolkit/maplibre-3d-layers", "three"],
     },
   },

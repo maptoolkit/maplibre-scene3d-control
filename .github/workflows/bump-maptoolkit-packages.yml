@@ -1,0 +1,150 @@
+name: Bump maplibre-3d-layers
+
+# Triggered by the release workflow of @maptoolkit/maplibre-3d-layers (event maptoolkit-package-released, sent with
+# MAPTOOLKIT_OPS_PAT). The control bundles that library (a dependency, and the copy next to the standalone build), so
+# every release of it is a release of the control, and the control's consumers get the library only that way:
+#
+#   1. raise the dependency and version the control in the same PR (a changeset at the library's bump level, then
+#      `changeset version`), so no "Version Packages" PR is needed,
+#   2. open the PR with the machine-user PAT (a PR from GITHUB_TOKEN would not trigger CI),
+#   3. merge it once CI is green. The push to main makes release.yml publish (no pending changesets left), and its
+#      "Notify consumers" step sends the control's release on to styleeditor, docs and the website.
+#
+# Other packages, prereleases and versions not newer than the installed one are ignored, so a test run with an old
+# version cannot publish a downgrade.
+
+on:
+  repository_dispatch:
+    types: [maptoolkit-package-released]
+  workflow_dispatch:
+    inputs:
+      package:
+        description: "npm package, e.g. @maptoolkit/maplibre-3d-layers"
+        type: string
+        required: true
+      version:
+        description: "Version, e.g. 0.5.5"
+        type: string
+        required: true
+
+concurrency:
+  group: bump-${{ github.event.client_payload.package || inputs.package }}
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    env:
+      PACKAGE: ${{ github.event.client_payload.package || inputs.package }}
+      VERSION: ${{ github.event.client_payload.version || inputs.version }}
+      LIBRARY: "@maptoolkit/maplibre-3d-layers"
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check the event
+        id: event
+        run: |
+          set -euo pipefail
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || { echo "::error::not a version: $VERSION"; exit 1; }
+          if [ "$PACKAGE" != "$LIBRARY" ]; then
+            echo "$PACKAGE is not bundled here, nothing to do."
+            echo "go=false" >> "$GITHUB_OUTPUT"
+          elif [[ "$VERSION" == *-* ]]; then
+            echo "$VERSION is a prerelease, nothing to do."
+            echo "go=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "go=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # npm serves a new version only minutes after the publish job reported success (3–17 min seen).
+      - name: Wait for the version on npm
+        if: steps.event.outputs.go == 'true'
+        run: |
+          url="https://registry.npmjs.org/${LIBRARY}/-/maplibre-3d-layers-${VERSION}.tgz"
+          for i in $(seq 1 60); do
+            if curl -sfI "$url" > /dev/null; then exit 0; fi
+            echo "not on npm yet ($i/60): $url"
+            sleep 30
+          done
+          echo "::error::$url did not appear on npm within 30 minutes"
+          exit 1
+
+      - uses: actions/setup-node@v4
+        if: steps.event.outputs.go == 'true'
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+        if: steps.event.outputs.go == 'true'
+
+      # The bump level follows the library's: patch stays patch, a minor or major release of the library is one of
+      # the control too.
+      - name: Raise the dependency and version the control
+        id: bump
+        if: steps.event.outputs.go == 'true'
+        run: |
+          set -euo pipefail
+          installed=$(node -p "require('./node_modules/${LIBRARY}/package.json').version")
+          level=$(node -e '
+            const [a, b] = process.argv.slice(1).map((v) => v.split(".").map(Number));
+            const newer = a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
+            console.log(newer <= 0 ? "none" : a[0] !== b[0] ? "major" : a[1] !== b[1] ? "minor" : "patch");
+          ' "$VERSION" "$installed")
+          if [ "$level" = none ]; then
+            echo "$LIBRARY $VERSION is not newer than the installed $installed, nothing to do."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          npm install --no-audit --no-fund "${LIBRARY}@^${VERSION}"
+          printf -- '---\n"@maptoolkit/maplibre-scene3d-control": %s\n---\n\nBundles %s %s.\n' \
+            "$level" "$LIBRARY" "$VERSION" > ".changeset/bump-maplibre-3d-layers-${VERSION}.md"
+          npx changeset version
+          npm install --no-audit --no-fund --package-lock-only
+          release=$(node -p "require('./package.json').version")
+          git diff --stat
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          echo "release=$release" >> "$GITHUB_OUTPUT"
+          echo "$LIBRARY $installed → $VERSION ($level): the control becomes $release"
+
+      - name: Create or update pull request
+        id: pr
+        if: steps.bump.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.MAPTOOLKIT_OPS_PAT }}
+          branch: deps/maplibre-3d-layers
+          base: main
+          commit-message: "Bundle ${{ env.LIBRARY }} ${{ env.VERSION }} (release ${{ steps.bump.outputs.release }})"
+          title: "Bundle ${{ env.LIBRARY }} ${{ env.VERSION }} (release ${{ steps.bump.outputs.release }})"
+          body: |
+            Automated bump triggered by a `${{ env.LIBRARY }}` release (`maptoolkit-package-released`).
+
+            - The dependency is raised to `^${{ env.VERSION }}`; the standalone build bundles this version.
+            - The control is versioned in this PR (changeset and `changeset version`): it becomes `${{ steps.bump.outputs.release }}`.
+
+            This PR merges itself once CI is green. The merge publishes the release and sends it on to styleeditor, docs and the website. If CI fails, the PR stays open.
+          labels: dependencies
+          delete-branch: true
+
+      # gh pr checks reports nothing until CI has registered its run for the new head, so wait for that first.
+      - name: Merge once CI is green
+        if: steps.pr.outputs.pull-request-operation == 'created' || steps.pr.outputs.pull-request-operation == 'updated'
+        env:
+          GH_TOKEN: ${{ secrets.MAPTOOLKIT_OPS_PAT }}
+          PR: ${{ steps.pr.outputs.pull-request-number }}
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 24); do
+            if gh pr checks "$PR" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1 || [ $? -eq 8 ]; then break; fi
+            echo "no checks yet ($i/24)"
+            sleep 10
+          done
+          gh pr checks "$PR" --repo "$GITHUB_REPOSITORY" --watch --fail-fast --interval 15
+          gh pr merge "$PR" --repo "$GITHUB_REPOSITORY" --squash --delete-branch

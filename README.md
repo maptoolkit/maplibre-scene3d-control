@@ -13,11 +13,15 @@ Maptoolkit styles name their scene in `metadata["maptoolkit:scene3d"]`. The cont
 - rebuilds the layers after a style or terrain change; a diffed `setStyle` that keeps the scene only puts back what the diff dropped and keeps the 3D layers,
 - loads the 3D library (with three.js) only once the map reaches zoom 12.
 
+The 3D library comes with the control: you install and import only the control.
+
 ## Install
 
 ```bash
-npm install @maptoolkit/maplibre-scene3d-control @maptoolkit/maplibre-3d-layers three maplibre-gl
+npm install @maptoolkit/maplibre-scene3d-control maplibre-gl
 ```
+
+`@maptoolkit/maplibre-3d-layers` and three.js are dependencies of the control and come along. A bundler puts the 3D library into a file of its own that the control loads on demand.
 
 ## Usage
 
@@ -42,7 +46,7 @@ That is all: the scene of the style appears from zoom 12, and a style switch bri
 
 ### Without a bundler
 
-The package is ESM-only. With an [import map](https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/script/type/importmap), point `maplibre-gl` at its module build and let the control load the standalone build of maplibre-3d-layers, which includes three.js:
+The package is ESM-only. Load its standalone build, `dist/maplibre-scene3d-control.standalone.js` (also exported as `@maptoolkit/maplibre-scene3d-control/standalone`). Next to it in `dist/` lies the standalone build of maplibre-3d-layers with three.js included, `maplibre-3d-layers-<version>.standalone.mjs`, and the control loads it from there once the map reaches zoom 12. Point `maplibre-gl` at its module build with an [import map](https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/script/type/importmap), as for every MapLibre 6 plugin:
 
 ```html
 <script type="importmap">
@@ -50,17 +54,14 @@ The package is ESM-only. With an [import map](https://developer.mozilla.org/en-U
 </script>
 <script type="module">
   import * as maplibregl from "maplibre-gl";
-  import { Scene3dControl } from "https://unpkg.com/@maptoolkit/maplibre-scene3d-control@^0.1.0/dist/maplibre-scene3d-control.js";
+  import { Scene3dControl } from "https://unpkg.com/@maptoolkit/maplibre-scene3d-control@^0.3.0/dist/maplibre-scene3d-control.standalone.js";
 
   const map = new maplibregl.Map({ container: "map", style, center, zoom, pitch: 70, canvasContextAttributes: { antialias: true } });
-  map.addControl(
-    new Scene3dControl({
-      apiKey: "YOUR_KEY",
-      library: () => import("https://unpkg.com/@maptoolkit/maplibre-3d-layers@^0.5.1/dist/maplibre-3d-layers.standalone.mjs"),
-    }),
-  );
+  map.addControl(new Scene3dControl({ apiKey: "YOUR_KEY" }));
 </script>
 ```
+
+The file name of the bundled library carries its version, so a new release is a new URL and never meets a cached old copy. To self-host, copy both files and keep them side by side.
 
 ## Options
 
@@ -73,7 +74,7 @@ The package is ESM-only. With an [import map](https://developer.mozilla.org/en-U
 | `minzoom`    | `number`                            | `12`                                          | Zoom from which the 3D library is loaded. The buildings source has no tiles below 12.                                                                                                         |
 | `hideLayers` | `string[]`                          | `["building_3d", "building_3d_multicolored"]` | Style layers hidden while the scene's buildings are shown, e.g. a style's own 3D buildings. Hidden only once the buildings source has loaded: without a working API key the style keeps them. |
 | `modelBase`  | `string`                            | document base URL                             | Base for relative model URLs.                                                                                                                                                                 |
-| `library`    | `() => Promise<Scene3dLibrary>`     | `import("@maptoolkit/maplibre-3d-layers")`    | Loads the 3D library, e.g. from a CDN.                                                                                                                                                        |
+| `library`    | `() => Promise<Scene3dLibrary>`     | the bundled 3D library                        | Loads the 3D library. Default: `import("@maptoolkit/maplibre-3d-layers")`, in the standalone build the copy next to it. Pass a loader to use another build or version.                        |
 | `idPrefix`   | `string`                            | `"scene3d-"`                                  | Prefix of the source and layer ids the control adds.                                                                                                                                          |
 
 ## Methods
@@ -113,7 +114,7 @@ MapLibre ignores a diffed `setStyle` that changes nothing but the metadata. A sc
 
 ## Requirements
 
-- MapLibre GL JS ≥ 6, `@maptoolkit/maplibre-3d-layers` ≥ 0.5.1 and three.js ≥ 0.160 (peer dependencies of the 3D library).
+- MapLibre GL JS ≥ 6 (peer dependency). `@maptoolkit/maplibre-3d-layers` and three.js ≥ 0.160 come with the control.
 - A Maptoolkit API key with access to the buildings source.
 - A style with a scene, or a scene passed with `scene`. Vegetation also needs the style's `mtk` source.
 
@@ -136,6 +137,8 @@ npm run lint
 npm run typecheck
 npm run build
 ```
+
+Releases go through changesets: a merge to `main` with a changeset opens "Version Packages", and merging that publishes. A release of `@maptoolkit/maplibre-3d-layers` needs no hand: [`bump-maptoolkit-packages.yml`](.github/workflows/bump-maptoolkit-packages.yml) opens a PR that raises the bundled version and versions the control in one go (same bump level as the library), merges it once CI is green, and the merge publishes the control and notifies its consumers.
 
 ## License
 
