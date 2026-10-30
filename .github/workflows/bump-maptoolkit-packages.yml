@@ -8,7 +8,8 @@ name: Bump maplibre-3d-layers
 #      `changeset version`), so no "Version Packages" PR is needed,
 #   2. open the PR with the machine-user PAT (a PR from GITHUB_TOKEN would not trigger CI),
 #   3. merge it once CI is green. The push to main makes release.yml publish (no pending changesets left), and its
-#      "Notify consumers" step sends the control's release on to styleeditor, docs and the website.
+#      "Notify consumers" step sends the control's release on to styleeditor, docs, the website and
+#      generated-buildings.
 #
 # Other packages, prereleases and versions not newer than the installed one are ignored, so a test run with an old
 # version cannot publish a downgrade.
@@ -129,7 +130,7 @@ jobs:
             - The dependency is raised to `^${{ env.VERSION }}`; the standalone build bundles this version.
             - The control is versioned in this PR (changeset and `changeset version`): it becomes `${{ steps.bump.outputs.release }}`.
 
-            This PR merges itself once CI is green. The merge publishes the release and sends it on to styleeditor, docs and the website. If CI fails, the PR stays open.
+            This PR merges itself once CI is green. The merge publishes the release and sends it on to styleeditor, docs, the website and generated-buildings. If CI fails, the PR stays open.
           labels: dependencies
           delete-branch: true
 

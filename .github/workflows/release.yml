@@ -40,9 +40,9 @@ jobs:
           fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      # Consumers that pin this package (styleeditor, community docs, the maptoolkit.org website)
-      # open a bump PR on this event; each one ignores packages it doesn't use and waits until
-      # npm serves the version.
+      # Consumers that pin this package (styleeditor, community docs, the maptoolkit.org website,
+      # the generated-buildings demos) open a bump PR on this event; each one ignores packages it
+      # doesn't use and waits until npm serves the version.
       # The release is read off the tag changesets just created, like the step above: changeset
       # v3 prints its publish result in a format changesets/action@v1 doesn't parse, so the
       # action's `published` / `publishedPackages` outputs stay empty.
@@ -54,7 +54,7 @@ jobs:
           version=$(git tag --points-at HEAD | sed -n 's/^v//p' | head -1)
           [ -n "$version" ] || { echo "Nothing published in this run."; exit 0; }
           name=$(node -p "require('./package.json').name")
-          for repo in maptoolkit/styleeditor maptoolkit/docs maptoolkit/maptoolkit-org-website; do
+          for repo in maptoolkit/styleeditor maptoolkit/docs maptoolkit/maptoolkit-org-website maptoolkit/generated-buildings; do
             gh api "repos/$repo/dispatches" -f event_type=maptoolkit-package-released \
               -f "client_payload[package]=$name" -f "client_payload[version]=$version" \
               && echo "$repo ← $name@$version" \
