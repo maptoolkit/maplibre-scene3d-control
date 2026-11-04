@@ -193,6 +193,17 @@ export class Scene3dControl extends Evented<Scene3dControlEventType> implements 
     }
     this.container = container;
 
+    // Multisampling is decided when the map creates its WebGL context; a control added later cannot switch it on.
+    // Without it the buildings and trees get hard, pixelated edges, and the far trees lose their soft leaf edges.
+    const canvas = map.getCanvas?.();
+    const gl = canvas?.getContext?.("webgl2") ?? canvas?.getContext?.("webgl");
+    if (gl && (gl as WebGLRenderingContext).getContextAttributes?.()?.antialias === false) {
+      this.warnOnce(
+        "antialias",
+        "Scene3dControl: the map's WebGL context has no multisampling, so the 3D buildings and trees get pixelated edges. Create the map with canvasContextAttributes: { antialias: true }.",
+      );
+    }
+
     map.on("style.load", this.onStyleLoad);
     map.on("styledata", this.onStyleData);
     map.on("terrain", this.onTerrain);
