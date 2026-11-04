@@ -1,5 +1,11 @@
 # @maptoolkit/maplibre-scene3d-control
 
+## 0.3.3
+
+### Patch Changes
+
+- 2863f86: Warn once in the console when the map's WebGL context has no multisampling (`canvasContextAttributes: { antialias: true }`): without it the buildings and trees render with pixelated edges, and the control cannot switch it on itself.
+
 ## 0.3.2
 
 ### Patch Changes
