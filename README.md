@@ -37,7 +37,7 @@ const map = new maplibregl.Map({
   zoom: 16,
   pitch: 70,
   maxPitch: 85,
-  canvasContextAttributes: { antialias: true }, // soft edges on distant trees
+  canvasContextAttributes: { antialias: true }, // smooth edges on the buildings, soft edges on distant trees
 });
 map.addControl(new Scene3dControl({ apiKey: "YOUR_KEY" }));
 ```
@@ -113,6 +113,8 @@ Every part is optional except `version` and `source`. `position` (on `lod1`, `fi
 MapLibre ignores a diffed `setStyle` that changes nothing but the metadata. A scene that changes on its own, with the rest of the style unchanged, therefore never reaches the control that way: pass it with `setScene()` or use `setStyle` with `diff: false`.
 
 ## Requirements
+
+- **Create the map with `canvasContextAttributes: { antialias: true }`.** MapLibre leaves multisampling off; without it the buildings and trees render with hard, pixelated edges, and the far trees lose their soft leaf edges (alpha to coverage). The control cannot switch it on itself, since the WebGL context exists before the control is added; it warns once in the console when it finds a context without multisampling. Multisampling costs GPU on every frame, which is why MapLibre's default is off.
 
 - MapLibre GL JS ≥ 6 (peer dependency). `@maptoolkit/maplibre-3d-layers` and three.js ≥ 0.160 come with the control.
 - A Maptoolkit API key with access to the buildings source.

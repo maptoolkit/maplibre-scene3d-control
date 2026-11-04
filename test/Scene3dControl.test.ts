@@ -391,6 +391,24 @@ describe("Scene3dControl", () => {
     expect(consumer?.filter).toEqual(["boolean", false]);
   });
 
+  it("warns once when the map's WebGL context has no multisampling", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { load } = fakeLibrary();
+    const withAntialias = (antialias: boolean) =>
+      Object.assign(createMap(), { getCanvas: () => ({ getContext: () => ({ getContextAttributes: () => ({ antialias }) }) }) });
+    new Scene3dControl({ library: load }).onAdd(withAntialias(true));
+    await flush();
+    expect(warn).not.toHaveBeenCalledWith(expect.stringContaining("multisampling"));
+    const control = new Scene3dControl({ library: load });
+    const map = withAntialias(false);
+    control.onAdd(map);
+    control.onRemove();
+    control.onAdd(map);
+    await flush();
+    expect(warn.mock.calls.filter(([m]) => String(m).includes("multisampling"))).toHaveLength(1);
+    warn.mockRestore();
+  });
+
   it("ignores unknown scene versions", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const map = createMap({ metadata: { [SCENE3D_METADATA_KEY]: { version: 2, source: "x" } } });
