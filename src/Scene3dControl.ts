@@ -48,6 +48,12 @@ export interface Scene3dManifest {
   };
   /** `Fill3DLayer` on the source layer `buildings3d`. */
   fill3d?: { position?: Scene3dPosition; filter?: FilterSpecification; paint?: Record<string, Expression> };
+  /**
+   * The landmarks in the source layer `buildings3d`, as a `Fill3DLayer` of their own: with their own paint and their
+   * own place among the style's layers. `filter` picks them (default `["==", ["get", "source"], "landmark"]`), and
+   * `fill3d` then leaves those features out.
+   */
+  landmarks?: { position?: Scene3dPosition; filter?: FilterSpecification; paint?: Record<string, Expression> };
   /** Model library of the vegetation: id → glTF/glb URL. */
   models?: Record<string, string>;
   gltf?: Scene3dGltfLayer[];
@@ -113,12 +119,17 @@ const sceneKeyOf = (scene: Scene3dManifest | null) => (scene ? JSON.stringify(sc
 /** Source and exaggeration of a terrain, to tell a real change from a repeated setTerrain. */
 const terrainKeyOf = (terrain: { source: string; exaggeration?: number } | null | undefined) =>
   terrain ? `${terrain.source}|${terrain.exaggeration ?? 1}` : null;
-/** Whether a scene draws buildings, i.e. needs its buildings source. */
+/** Whether a scene draws buildings, in place of the style's own 3D buildings (`hideLayers`). */
 const hasBuildings = (scene: Scene3dManifest) => !!(scene.lod1 || scene.fill3d);
+/** Whether a scene reads the buildings source: for its buildings or its landmarks. */
+const usesBuildingsSource = (scene: Scene3dManifest) => hasBuildings(scene) || !!scene.landmarks;
+/** The landmarks among the features of the source layer `buildings3d`, unless the scene names another filter. */
+const LANDMARKS_FILTER = ["==", ["get", "source"], "landmark"] as unknown as FilterSpecification;
 
 /**
  * A MapLibre GL JS control plugin that adds the 3D scene of a Maptoolkit style: 3D buildings
- * (a `fill-extrusion` plus maplibre-3d-layers' `Fill3DLayer`) and glTF vegetation (`GltfLayer`).
+ * (a `fill-extrusion` plus maplibre-3d-layers' `Fill3DLayer`), the landmarks among them (a `Fill3DLayer`
+ * of their own) and glTF vegetation (`GltfLayer`).
  *
  * The scene comes from the style itself (`metadata["maptoolkit:scene3d"]`, written by style-family-js),
  * so a style switch brings its own scene. The control keeps the tilt in the global state `pitch`
@@ -320,7 +331,7 @@ export class Scene3dControl extends Evented<Scene3dControlEventType> implements 
     }
     if (!this.scene) return;
     if (this.custom.some((l) => !map.getLayer(l.id))) this.refresh();
-    else if (this.native.some((id) => !map.getLayer(id)) || (hasBuildings(this.scene) && !map.getSource(this.sourceId()))) this.restoreNative();
+    else if (this.native.some((id) => !map.getLayer(id)) || (usesBuildingsSource(this.scene) && !map.getSource(this.sourceId()))) this.restoreNative();
     else this.syncPitch();
   }
 
@@ -418,7 +429,7 @@ export class Scene3dControl extends Evented<Scene3dControlEventType> implements 
   private addNative(scene: Scene3dManifest, place = (_position: Scene3dPosition, before: string | undefined) => before) {
     const map = this.map!;
     const source = this.sourceId();
-    if (!hasBuildings(scene)) return; // trees only: no buildings source to load (or to answer 403 without a key)
+    if (!usesBuildingsSource(scene)) return; // trees only: no buildings source to load (or to answer 403 without a key)
     if (!map.getSource(source)) map.addSource(source, { type: "vector", url: this.withKey(scene.source) });
     const p = this.options.idPrefix;
     const anchor = this.labelsAnchor();
@@ -427,11 +438,11 @@ export class Scene3dControl extends Evented<Scene3dControlEventType> implements 
       const { position, ...lod1 } = scene.lod1;
       map.addLayer({ id: `${p}lod1`, type: "fill-extrusion", source, "source-layer": "buildings2d", ...lod1 } as never, before(position));
       this.native.push(`${p}lod1`);
-    } else if (scene.fill3d) {
-      // The Fill3DLayer reads tiles MapLibre only loads for a source a style layer uses.
+    } else {
+      // The Fill3DLayers (buildings, landmarks) read tiles MapLibre only loads for a source a style layer uses.
       map.addLayer(
         { id: `${p}consumer`, type: "fill", source, "source-layer": "buildings2d", filter: ["boolean", false], paint: { "fill-opacity": 0 } },
-        before(scene.fill3d.position),
+        before((scene.fill3d ?? scene.landmarks)?.position),
       );
       this.native.push(`${p}consumer`);
     }
@@ -486,9 +497,23 @@ export class Scene3dControl extends Evented<Scene3dControlEventType> implements 
     };
     this.building = true;
     try {
+      // The landmarks have a layer of their own, so the buildings' layer leaves them out. A scene without
+      // `landmarks` keeps them in `fill3d`: drawn as plain buildings rather than missing.
+      const landmarksFilter = scene.landmarks ? (scene.landmarks.filter ?? LANDMARKS_FILTER) : undefined;
       if (scene.fill3d) {
         const { position, ...fill3d } = scene.fill3d;
-        add(new lib.Fill3DLayer({ id: `${p}fill3d`, source: this.sourceId(), "source-layer": "buildings3d", ...fill3d }), position);
+        const filter = landmarksFilter && ["all", ...(fill3d.filter ? [fill3d.filter] : []), ["!", landmarksFilter]];
+        add(
+          new lib.Fill3DLayer({ id: `${p}fill3d`, source: this.sourceId(), "source-layer": "buildings3d", ...fill3d, ...(filter ? { filter } : {}) }),
+          position,
+        );
+      }
+      if (scene.landmarks) {
+        const { position, ...landmarks } = scene.landmarks;
+        add(
+          new lib.Fill3DLayer({ id: `${p}landmarks`, source: this.sourceId(), "source-layer": "buildings3d", ...landmarks, filter: landmarksFilter }),
+          position,
+        );
       }
       const library = scene.models ?? {};
       for (const entry of scene.gltf ?? []) {
