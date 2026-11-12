@@ -3,11 +3,11 @@
 [![License](https://img.shields.io/npm/l/@maptoolkit/maplibre-scene3d-control?style=plastic)](LICENSE)
 [![Version](https://img.shields.io/npm/v/@maptoolkit/maplibre-scene3d-control?style=plastic)](https://www.npmjs.com/package/@maptoolkit/maplibre-scene3d-control)
 
-A [MapLibre GL JS](https://maplibre.org/maplibre-gl-js/docs/) control plugin that adds the 3D scene of a Maptoolkit style: 3D buildings and glTF vegetation.
+A [MapLibre GL JS](https://maplibre.org/maplibre-gl-js/docs/) control plugin that adds the 3D scene of a Maptoolkit style: 3D buildings, landmarks and glTF vegetation.
 
 Maptoolkit styles name their scene in `metadata["maptoolkit:scene3d"]`. The control reads it whenever the style changes, so switching styles switches the scene. It draws the buildings with a `fill-extrusion` plus [`@maptoolkit/maplibre-3d-layers`](https://www.npmjs.com/package/@maptoolkit/maplibre-3d-layers) (`Fill3DLayer`, `GltfLayer`) and takes care of the rest:
 
-- adds the buildings source with your API key (only for a scene with buildings),
+- adds the buildings source with your API key (only for a scene with buildings or landmarks),
 - puts the layers under the style's labels,
 - keeps the tilt in the global state `pitch`, which the scene's opacity fades read,
 - rebuilds the layers after a style or terrain change; a diffed `setStyle` that keeps the scene only puts back what the diff dropped and keeps the 3D layers,
@@ -103,12 +103,25 @@ All values are plain MapLibre or maplibre-3d-layers options. Maptoolkit styles g
   source: "https://…/buildings.json",              // TileJSON of the buildings, without api_key
   lod1: { filter, paint, layout },                 // fill-extrusion on the source layer buildings2d
   fill3d: { paint },                               // Fill3DLayer on the source layer buildings3d
+  landmarks: { position, filter, paint },          // the landmarks in buildings3d, a Fill3DLayer of their own
   models: { tree_1: "https://static.maptoolkit.net/3d/models/…/Tree.gltf" },
   gltf: [{ id, models: ["tree_1"], source: "mtk", "source-layer": "natural", filter, minzoom, layout, paint, lighting }],
 }
 ```
 
-Every part is optional except `version` and `source`. `position` (on `lod1`, `fill3d` and every `gltf` layer) decides where a layer goes: under the style's labels by default (`"below-labels"`, right below the style's first symbol layer), on top of everything with `"top"`, or right below the style layer whose id it names, e.g. `position: "water_waterway_label_rank_4"`. A layer id the style lacks falls back to under the labels, with a console warning. The position only matters against symbol layers (labels, icons): fills and lines always end up under the 3D layers. Vegetation needs the source it names in the style (`mtk` in Maptoolkit styles); a layer whose source the style lacks is left out with a warning.
+Every part is optional except `version` and `source`. `position` (on `lod1`, `fill3d`, `landmarks` and every `gltf` layer) decides where a layer goes: under the style's labels by default (`"below-labels"`, right below the style's first symbol layer), on top of everything with `"top"`, or right below the style layer whose id it names, e.g. `position: "water_waterway_label_rank_4"`. A layer id the style lacks falls back to under the labels, with a console warning. The position only matters against symbol layers (labels, icons): fills and lines always end up under the 3D layers. Vegetation needs the source it names in the style (`mtk` in Maptoolkit styles); a layer whose source the style lacks is left out with a warning.
+
+`landmarks` draws the landmarks that the buildings tiles carry in the source layer `buildings3d` (features with `source: "landmark"`, each face with its `colour`) as a `Fill3DLayer` of their own, so they can have their own paint and their own place among the style's layers:
+
+```js
+landmarks: {
+  position: "water_waterway_label_rank_2",
+  filter: ["==", ["get", "source"], "landmark"], // the default
+  paint: { "fill-3d-color": ["to-color", ["get", "colour"], "#ffffff"], "fill-3d-opacity": 1 },
+}
+```
+
+`fill3d` then leaves those features out: its filter becomes `["all", <its own filter, if any>, ["!", <the landmarks' filter>]]` (expression filters). A scene without `landmarks` keeps them in `fill3d`, drawn as plain buildings. `landmarks` works without `fill3d` and `lod1` too; the style's own 3D buildings (`hideLayers`) then stay. `paint` goes to the `Fill3DLayer` as it is, on `fill3d` as well, including the `fill-3d-ambient-occlusion-*` keys of maplibre-3d-layers ≥ 0.6 (older versions ignore them, and place a landmark like a building instead of rigidly at its anchor).
 
 MapLibre ignores a diffed `setStyle` that changes nothing but the metadata. A scene that changes on its own, with the rest of the style unchanged, therefore never reaches the control that way: pass it with `setScene()` or use `setStyle` with `diff: false`.
 
