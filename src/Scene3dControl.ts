@@ -46,8 +46,17 @@ export interface Scene3dManifest {
     paint?: Record<string, Expression>;
     layout?: Record<string, Expression>;
   };
-  /** `Fill3DLayer` on the source layer `buildings3d`. */
-  fill3d?: { position?: Scene3dPosition; filter?: FilterSpecification; paint?: Record<string, Expression> };
+  /**
+   * `Fill3DLayer` on the source layer `buildings3d`. With `extrusion` it also extrudes the 2D footprints of a source
+   * layer of the same tiles (maplibre-3d-layers ≥ 0.6.0, experimental), so that they get its shading and fake ambient
+   * occlusion; hide the same footprints in `lod1` where it does, e.g. by zoom.
+   */
+  fill3d?: {
+    position?: Scene3dPosition;
+    filter?: FilterSpecification;
+    paint?: Record<string, Expression>;
+    extrusion?: { "source-layer": string; filter?: FilterSpecification; height?: Expression; base?: Expression };
+  };
   /**
    * The landmarks in the source layer `buildings3d`, as a `Fill3DLayer` of their own: with their own paint and their
    * own place among the style's layers. `filter` picks them (default `["==", ["get", "source"], "landmark"]`), and
