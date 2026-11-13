@@ -123,10 +123,10 @@ landmarks: {
 
 `fill3d` then leaves those features out: its filter becomes `["all", <its own filter, if any>, ["!", <the landmarks' filter>]]` (expression filters). A scene without `landmarks` keeps them in `fill3d`, drawn as plain buildings. `landmarks` works without `fill3d` and `lod1` too; the style's own 3D buildings (`hideLayers`) then stay. `paint` goes to the `Fill3DLayer` as it is, on `fill3d` as well, including the `fill-3d-ambient-occlusion-*` keys of maplibre-3d-layers ≥ 0.6 (older versions ignore them, and place a landmark like a building instead of rigidly at its anchor).
 
-`fill3d.extrusion` lets the `Fill3DLayer` extrude the 2D footprints as well (maplibre-3d-layers ≥ 0.6.0, experimental), so that they get the shading and the fake ambient occlusion of the 3D buildings. The control passes it on as it is; hand the same footprints over by zoom, so that none is drawn twice:
+`fill3d.extrusion` lets the `Fill3DLayer` extrude the 2D footprints as well (maplibre-3d-layers ≥ 0.6.0, experimental), so that they get the shading and the fake ambient occlusion of the 3D buildings. The control passes it on as it is; hand the same footprints over by the zoom of the tile, so that none is drawn twice:
 
 ```js
-lod1: { maxzoom: 15, filter: ["!=", ["get", "extrude"], false], paint },                 // native below z15
+lod1: { filter: ["all", ["!=", ["get", "extrude"], false], ["<", ["zoom"], 15]], paint },  // native in tiles below z15
 fill3d: {
   extrusion: {
     "source-layer": "buildings2d",
@@ -136,7 +136,7 @@ fill3d: {
 },
 ```
 
-The extrusion filter sees the zoom of the tile, not of the map. The extruded faces carry `type: "roof" | "wall"`, so a `fill-3d-color` keyed on `type` colours them like the 3D buildings.
+Both filters see the zoom of the tile, not of the map. Don't stop `lod1` with `maxzoom` instead: that is the map zoom, and a pitched view at zoom 15+ still loads z13/z14 tiles in the distance, which then get no buildings from either layer. The extruded faces carry `type: "roof" | "wall"`, so a `fill-3d-color` keyed on `type` colours them like the 3D buildings.
 
 MapLibre ignores a diffed `setStyle` that changes nothing but the metadata. A scene that changes on its own, with the rest of the style unchanged, therefore never reaches the control that way: pass it with `setScene()` or use `setStyle` with `diff: false`.
 
