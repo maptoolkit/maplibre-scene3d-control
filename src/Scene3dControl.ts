@@ -49,7 +49,7 @@ export interface Scene3dManifest {
   /**
    * `Fill3DLayer` on the source layer `buildings3d`. With `extrusion` it also extrudes the 2D footprints of a source
    * layer of the same tiles (maplibre-3d-layers ≥ 0.6.0, experimental), so that they get its shading and fake ambient
-   * occlusion; hide the same footprints in `lod1` where it does, e.g. by zoom.
+   * occlusion; leave the same footprints out of `lod1` where it does, by a filter on the tile zoom (not `maxzoom`).
    */
   fill3d?: {
     position?: Scene3dPosition;
