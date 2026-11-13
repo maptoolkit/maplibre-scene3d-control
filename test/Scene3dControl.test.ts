@@ -391,6 +391,24 @@ describe("Scene3dControl", () => {
     expect(consumer?.filter).toEqual(["boolean", false]);
   });
 
+  it("passes fill3d.extrusion on to the Fill3DLayer and keeps the lod1 zoom range", async () => {
+    const extrusion = { "source-layer": "buildings2d", filter: ["all", ["!=", ["get", "extrude"], false], [">=", ["zoom"], 15]] as never };
+    const scene: Scene3dManifest = { ...SCENE, lod1: { ...SCENE.lod1, maxzoom: 15 }, fill3d: { ...SCENE.fill3d, extrusion } };
+    const map = createMap({ metadata: { [SCENE3D_METADATA_KEY]: scene } });
+    const { load, made } = fakeLibrary();
+    new Scene3dControl({ library: load }).onAdd(map);
+    await flush();
+
+    expect(made[0].options).toEqual({
+      id: "scene3d-fill3d",
+      source: "scene3d-buildings",
+      "source-layer": "buildings3d",
+      paint: SCENE.fill3d!.paint,
+      extrusion,
+    });
+    expect(map.getLayer("scene3d-lod1")?.maxzoom).toBe(15);
+  });
+
   it("draws the landmarks as a layer of their own and keeps them out of the buildings", async () => {
     const isLandmark = ["==", ["get", "source"], "landmark"];
     const paint = {
