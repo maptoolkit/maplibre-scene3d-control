@@ -10,7 +10,8 @@ Maptoolkit styles name their scene in `metadata["maptoolkit:scene3d"]`. The cont
 - adds the buildings source with your API key (only for a scene with buildings or landmarks),
 - puts the layers under the style's labels,
 - keeps the tilt in the global state `pitch`, which the scene's opacity fades read,
-- rebuilds the layers after a style or terrain change; a diffed `setStyle` that keeps the scene only puts back what the diff dropped and keeps the 3D layers,
+- rebuilds the layers after a style change; a diffed `setStyle` that keeps the scene only puts back what the diff dropped and keeps the 3D layers,
+- leaves the 3D layers in place when the terrain is switched on, off or changed: they move onto the new heights themselves, without loading again,
 - loads the 3D library (with three.js) only once the map reaches zoom 12.
 
 The 3D library comes with the control: you install and import only the control.
