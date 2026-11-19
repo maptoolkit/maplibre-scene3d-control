@@ -125,9 +125,6 @@ type StyleHandle = { _loaded?: boolean } | undefined;
 const styleOf = (map: MaplibreMap) => (map as unknown as { style?: StyleHandle }).style;
 /** Compares scenes across style updates: the metadata comes as a new object each time. */
 const sceneKeyOf = (scene: Scene3dManifest | null) => (scene ? JSON.stringify(scene) : null);
-/** Source and exaggeration of a terrain, to tell a real change from a repeated setTerrain. */
-const terrainKeyOf = (terrain: { source: string; exaggeration?: number } | null | undefined) =>
-  terrain ? `${terrain.source}|${terrain.exaggeration ?? 1}` : null;
 /** Whether a scene draws buildings, in place of the style's own 3D buildings (`hideLayers`). */
 const hasBuildings = (scene: Scene3dManifest) => !!(scene.lod1 || scene.fill3d);
 /** Whether a scene reads the buildings source: for its buildings or its landmarks. */
@@ -143,7 +140,8 @@ const LANDMARKS_FILTER = ["==", ["get", "source"], "landmark"] as unknown as Fil
  * The scene comes from the style itself (`metadata["maptoolkit:scene3d"]`, written by style-family-js),
  * so a style switch brings its own scene. The control keeps the tilt in the global state `pitch`
  * that the scene's opacity fades read, puts the layers under the style's labels, rebuilds them after
- * style and terrain changes and loads the 3D library only when the map gets close enough.
+ * a style change and loads the 3D library only when the map gets close enough. A terrain that is
+ * switched on, off or changed leaves the 3D layers as they are: they move onto it themselves.
  */
 export class Scene3dControl extends Evented<Scene3dControlEventType> implements IControl {
   readonly options: ResolvedOptions;
@@ -174,8 +172,6 @@ export class Scene3dControl extends Evented<Scene3dControlEventType> implements 
   private sourceOk = false;
   /** The position each custom layer was added with (`"below-labels"` when the scene names none). */
   private customPosition = new Map<string, Scene3dPosition>();
-  /** The terrain the 3D layers were built with (source and exaggeration), see onTerrain. */
-  private terrainKey: string | null = null;
 
   constructor(options: Scene3dControlOptions = {}) {
     super();
@@ -226,7 +222,6 @@ export class Scene3dControl extends Evented<Scene3dControlEventType> implements 
 
     map.on("style.load", this.onStyleLoad);
     map.on("styledata", this.onStyleData);
-    map.on("terrain", this.onTerrain);
     map.on("pitch", this.syncPitch);
     map.on("zoomend", this.onZoom);
     // Added to a map whose style has already loaded: no style.load will come for it.
@@ -240,7 +235,6 @@ export class Scene3dControl extends Evented<Scene3dControlEventType> implements 
     this.teardown(true);
     map.off("style.load", this.onStyleLoad);
     map.off("styledata", this.onStyleData);
-    map.off("terrain", this.onTerrain);
     map.off("pitch", this.syncPitch);
     map.off("zoomend", this.onZoom);
     this.container?.remove();
@@ -343,17 +337,6 @@ export class Scene3dControl extends Evented<Scene3dControlEventType> implements 
     else if (this.native.some((id) => !map.getLayer(id)) || (usesBuildingsSource(this.scene) && !map.getSource(this.sourceId()))) this.restoreNative();
     else this.syncPitch();
   }
-
-  // The 3D layers take the terrain source and exaggeration as they are when they are added (heights
-  // are sampled from the current terrain each pass). MapLibre fires `terrain` on every setTerrain, also
-  // with the same options; rebuilding then would restart model loading each time (an app re-applying
-  // its terrain after every style update kept the models loading for good).
-  private onTerrain = () => {
-    if (!this.map || !this.styleReady() || !this.custom.length || !this.scene) return;
-    if (terrainKeyOf(this.map.getTerrain()) === this.terrainKey) return;
-    this.removeCustom();
-    this.addCustom(this.scene, this.generation);
-  };
 
   private onZoom = () => {
     if (!this.map || this.lib || !this.scene || this.map.getZoom() < this.options.minzoom) return;
@@ -498,7 +481,6 @@ export class Scene3dControl extends Evented<Scene3dControlEventType> implements 
     if (!map || !lib || generation !== this.generation || !this.styleReady()) return;
     const anchor = this.labelsAnchor();
     const p = this.options.idPrefix;
-    this.terrainKey = terrainKeyOf(map.getTerrain());
     const add = (layer: CustomLayerInterface, position: Scene3dPosition | undefined) => {
       map.addLayer(layer, this.beforeFor(position, anchor));
       this.custom.push(layer);

@@ -240,22 +240,19 @@ describe("Scene3dControl", () => {
     expect(map.ids()).toHaveLength(count);
   });
 
-  it("rebuilds the 3D layers for a terrain change only, not for the same terrain set again", async () => {
+  it("keeps the 3D layers through a terrain change: they move onto the terrain themselves", async () => {
     const map = createMap();
     const { load, made } = fakeLibrary();
-    new Scene3dControl({ library: load }).onAdd(map);
+    const control = new Scene3dControl({ library: load });
+    control.onAdd(map);
     await flush();
-    const perBuild = made.length; // the 3D layers of one build
-    const builds = () => made.length / perBuild;
+    const count = made.length;
+    const layers = control.getLayers();
     map.setTerrain({ source: "dem", exaggeration: 1 }); // terrain on
-    expect(builds()).toBe(2);
-    map.setTerrain({ source: "dem", exaggeration: 1 }); // the same again, e.g. after every style update
-    map.setTerrain({ source: "dem", exaggeration: 1 });
-    expect(builds()).toBe(2);
     map.setTerrain({ source: "dem", exaggeration: 1.5 }); // exaggeration changed
-    expect(builds()).toBe(3);
     map.setTerrain(null); // terrain off
-    expect(builds()).toBe(4);
+    expect(made.length).toBe(count);
+    expect(control.getLayers().every((layer, i) => layer === layers[i])).toBe(true);
   });
 
   it("keeps the tilt in the global state pitch", () => {
@@ -446,9 +443,9 @@ describe("Scene3dControl", () => {
     expect(scene.fill3d).toEqual({ paint: buildingsPaint }); // the scene itself is left as it is
     expect(control.getLayers().map((l) => l.id)).toContain("scene3d-landmarks");
 
-    // rebuilt with the other 3D layers, removed with them
+    // kept through a terrain change like the other 3D layers, removed with them
     map.setTerrain({ source: "dem" });
-    expect(made.filter((m) => m.options.id === "scene3d-landmarks")).toHaveLength(2);
+    expect(made.filter((m) => m.options.id === "scene3d-landmarks")).toHaveLength(1);
     control.onRemove();
     expect(map.ids().some((id) => id.startsWith("scene3d-"))).toBe(false);
   });
