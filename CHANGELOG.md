@@ -1,5 +1,11 @@
 # @maptoolkit/maplibre-scene3d-control
 
+## 0.6.1
+
+### Patch Changes
+
+- Bundles @maptoolkit/maplibre-3d-layers 0.7.1.
+
 ## 0.6.0
 
 ### Minor Changes
