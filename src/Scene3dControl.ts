@@ -38,7 +38,7 @@ export interface Scene3dManifest {
   /** TileJSON URL of the buildings source, without api_key. */
   source: string;
   /** `fill-extrusion` on the source layer `buildings2d`. */
-  lod1?: {
+  building_extruded?: {
     position?: Scene3dPosition;
     minzoom?: number;
     maxzoom?: number;
@@ -49,9 +49,10 @@ export interface Scene3dManifest {
   /**
    * `Fill3DLayer` on the source layer `buildings3d`. With `extrusion` it also extrudes the 2D footprints of a source
    * layer of the same tiles (maplibre-3d-layers ≥ 0.6.0, experimental), so that they get its shading and fake ambient
-   * occlusion; leave the same footprints out of `lod1` where it does, by a filter on the tile zoom (not `maxzoom`).
+   * occlusion; leave the same footprints out of `building_extruded` where it does, by a filter on the tile zoom (not
+   * `maxzoom`).
    */
-  fill3d?: {
+  building_3d?: {
     position?: Scene3dPosition;
     filter?: FilterSpecification;
     paint?: Record<string, Expression>;
@@ -60,9 +61,15 @@ export interface Scene3dManifest {
   /**
    * The landmarks in the source layer `buildings3d`, as a `Fill3DLayer` of their own: with their own paint and their
    * own place among the style's layers. `filter` picks them (default `["==", ["get", "source"], "landmark"]`), and
-   * `fill3d` then leaves those features out.
+   * `building_3d` then leaves those features out.
    */
-  landmarks?: { position?: Scene3dPosition; filter?: FilterSpecification; paint?: Record<string, Expression> };
+  landmarks_3d?: { position?: Scene3dPosition; filter?: FilterSpecification; paint?: Record<string, Expression> };
+  /** @deprecated The name of `building_extruded` before 0.8.0, still read when `building_extruded` is missing. */
+  lod1?: Scene3dManifest["building_extruded"];
+  /** @deprecated The name of `building_3d` before 0.8.0, still read when `building_3d` is missing. */
+  fill3d?: Scene3dManifest["building_3d"];
+  /** @deprecated The name of `landmarks_3d` before 0.8.0, still read when `landmarks_3d` is missing. */
+  landmarks?: Scene3dManifest["landmarks_3d"];
   /** Model library of the vegetation: id → glTF/glb URL. */
   models?: Record<string, string>;
   gltf?: Scene3dGltfLayer[];
@@ -90,8 +97,9 @@ export interface Scene3dControlOptions {
   minzoom?: number;
   /**
    * Style layers hidden while the scene's buildings are shown, e.g. a style's own 3D buildings (default the v2 ids
-   * `building_3d`, `building_3d_multicolored`). Hidden only once the buildings source has loaded, so without a working
-   * API key the style keeps them.
+   * `building_extruded`, `building_extruded_multicolored`, and their names before style-family-js 2.7.0, `building_3d`,
+   * `building_3d_multicolored`). Hidden only once the buildings source has loaded, so without a working API key the
+   * style keeps them.
    */
   hideLayers?: string[];
   /** Base for relative model URLs (default the document's base URL). */
@@ -113,7 +121,7 @@ const DEFAULTS: Omit<ResolvedOptions, "library"> = {
   enabled: true,
   button: false,
   minzoom: 12,
-  hideLayers: ["building_3d", "building_3d_multicolored"],
+  hideLayers: ["building_extruded", "building_extruded_multicolored", "building_3d", "building_3d_multicolored"],
   idPrefix: "scene3d-",
 };
 
@@ -125,10 +133,24 @@ type StyleHandle = { _loaded?: boolean } | undefined;
 const styleOf = (map: MaplibreMap) => (map as unknown as { style?: StyleHandle }).style;
 /** Compares scenes across style updates: the metadata comes as a new object each time. */
 const sceneKeyOf = (scene: Scene3dManifest | null) => (scene ? JSON.stringify(scene) : null);
+/**
+ * The scene with the entry names of 0.8.0: `lod1`, `fill3d` and `landmarks` read as `building_extruded`, `building_3d`
+ * and `landmarks_3d`; where a scene has both, the new name wins. A scene without the old names comes back as it is.
+ */
+function withCurrentNames(scene: Scene3dManifest): Scene3dManifest {
+  const { lod1, fill3d, landmarks, ...rest } = scene;
+  if (!lod1 && !fill3d && !landmarks) return scene;
+  return {
+    ...rest,
+    building_extruded: rest.building_extruded ?? lod1,
+    building_3d: rest.building_3d ?? fill3d,
+    landmarks_3d: rest.landmarks_3d ?? landmarks,
+  };
+}
 /** Whether a scene draws buildings, in place of the style's own 3D buildings (`hideLayers`). */
-const hasBuildings = (scene: Scene3dManifest) => !!(scene.lod1 || scene.fill3d);
+const hasBuildings = (scene: Scene3dManifest) => !!(scene.building_extruded || scene.building_3d);
 /** Whether a scene reads the buildings source: for its buildings or its landmarks. */
-const usesBuildingsSource = (scene: Scene3dManifest) => hasBuildings(scene) || !!scene.landmarks;
+const usesBuildingsSource = (scene: Scene3dManifest) => hasBuildings(scene) || !!scene.landmarks_3d;
 /** The landmarks among the features of the source layer `buildings3d`, unless the scene names another filter. */
 const LANDMARKS_FILTER = ["==", ["get", "source"], "landmark"] as unknown as FilterSpecification;
 
@@ -262,7 +284,7 @@ export class Scene3dControl extends Evented<Scene3dControlEventType> implements 
     this.refresh();
   }
 
-  /** The scene shown now, or null. */
+  /** The scene shown now, or null; a scene with the entry names before 0.8.0 as read with the new ones. */
   getScene(): Scene3dManifest | null {
     return this.scene;
   }
@@ -382,6 +404,7 @@ export class Scene3dControl extends Evented<Scene3dControlEventType> implements 
         this.warnOnce(`version-${String(scene.version)}`, `Scene3dControl: unsupported scene version ${String(scene.version)}`);
         scene = null;
       }
+      if (scene) scene = withCurrentNames(scene);
       this.scene = scene;
       if (scene) {
         this.syncPitch();
@@ -426,15 +449,15 @@ export class Scene3dControl extends Evented<Scene3dControlEventType> implements 
     const p = this.options.idPrefix;
     const anchor = this.labelsAnchor();
     const before = (position: Scene3dPosition | undefined) => place(position ?? "below-labels", this.beforeFor(position, anchor));
-    if (scene.lod1) {
-      const { position, ...lod1 } = scene.lod1;
-      map.addLayer({ id: `${p}lod1`, type: "fill-extrusion", source, "source-layer": "buildings2d", ...lod1 } as never, before(position));
-      this.native.push(`${p}lod1`);
+    if (scene.building_extruded) {
+      const { position, ...extruded } = scene.building_extruded;
+      map.addLayer({ id: `${p}building_extruded`, type: "fill-extrusion", source, "source-layer": "buildings2d", ...extruded } as never, before(position));
+      this.native.push(`${p}building_extruded`);
     } else {
       // The Fill3DLayers (buildings, landmarks) read tiles MapLibre only loads for a source a style layer uses.
       map.addLayer(
         { id: `${p}consumer`, type: "fill", source, "source-layer": "buildings2d", filter: ["boolean", false], paint: { "fill-opacity": 0 } },
-        before((scene.fill3d ?? scene.landmarks)?.position),
+        before((scene.building_3d ?? scene.landmarks_3d)?.position),
       );
       this.native.push(`${p}consumer`);
     }
@@ -489,20 +512,20 @@ export class Scene3dControl extends Evented<Scene3dControlEventType> implements 
     this.building = true;
     try {
       // The landmarks have a layer of their own, so the buildings' layer leaves them out. A scene without
-      // `landmarks` keeps them in `fill3d`: drawn as plain buildings rather than missing.
-      const landmarksFilter = scene.landmarks ? (scene.landmarks.filter ?? LANDMARKS_FILTER) : undefined;
-      if (scene.fill3d) {
-        const { position, ...fill3d } = scene.fill3d;
-        const filter = landmarksFilter && ["all", ...(fill3d.filter ? [fill3d.filter] : []), ["!", landmarksFilter]];
+      // `landmarks_3d` keeps them in `building_3d`: drawn as plain buildings rather than missing.
+      const landmarksFilter = scene.landmarks_3d ? (scene.landmarks_3d.filter ?? LANDMARKS_FILTER) : undefined;
+      if (scene.building_3d) {
+        const { position, ...buildings } = scene.building_3d;
+        const filter = landmarksFilter && ["all", ...(buildings.filter ? [buildings.filter] : []), ["!", landmarksFilter]];
         add(
-          new lib.Fill3DLayer({ id: `${p}fill3d`, source: this.sourceId(), "source-layer": "buildings3d", ...fill3d, ...(filter ? { filter } : {}) }),
+          new lib.Fill3DLayer({ id: `${p}building_3d`, source: this.sourceId(), "source-layer": "buildings3d", ...buildings, ...(filter ? { filter } : {}) }),
           position,
         );
       }
-      if (scene.landmarks) {
-        const { position, ...landmarks } = scene.landmarks;
+      if (scene.landmarks_3d) {
+        const { position, ...landmarks } = scene.landmarks_3d;
         add(
-          new lib.Fill3DLayer({ id: `${p}landmarks`, source: this.sourceId(), "source-layer": "buildings3d", ...landmarks, filter: landmarksFilter }),
+          new lib.Fill3DLayer({ id: `${p}landmarks_3d`, source: this.sourceId(), "source-layer": "buildings3d", ...landmarks, filter: landmarksFilter }),
           position,
         );
       }
