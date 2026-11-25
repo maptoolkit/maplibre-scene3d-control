@@ -5,8 +5,8 @@ import { Scene3dControl, SCENE3D_METADATA_KEY, type Scene3dLibrary, type Scene3d
 const SCENE: Scene3dManifest = {
   version: 1,
   source: "https://example.com/buildings.json",
-  lod1: { filter: ["!=", ["get", "extrude"], false], paint: { "fill-extrusion-height": ["get", "height"] } },
-  fill3d: { paint: { "fill-3d-color": "#eee" } },
+  building_extruded: { filter: ["!=", ["get", "extrude"], false], paint: { "fill-extrusion-height": ["get", "height"] } },
+  building_3d: { paint: { "fill-3d-color": "#eee" } },
   models: { tree: "https://example.com/tree.gltf", rock: "models/rock.gltf" },
   gltf: [
     { id: "trees", models: ["tree"], source: "mtk", "source-layer": "natural", minzoom: 15 },
@@ -20,7 +20,7 @@ type Layer = { id: string; type: string; layout?: Record<string, unknown>; [k: s
 /** The test style's own layers, fresh each time (a style update brings new objects). */
 const baseLayers = (): Layer[] => [
   { id: "background", type: "background" },
-  { id: "building_3d", type: "fill-extrusion", layout: {} },
+  { id: "building_extruded", type: "fill-extrusion", layout: {} },
   { id: "road", type: "line" },
   { id: "road_label", type: "symbol" },
   { id: "place_label", type: "symbol" },
@@ -153,16 +153,16 @@ describe("Scene3dControl", () => {
     expect(map.addSource).toHaveBeenCalledWith("scene3d-buildings", { type: "vector", url: "https://example.com/buildings.json?api_key=KEY" });
     expect(map.ids()).toEqual([
       "background",
-      "building_3d",
+      "building_extruded",
       "road",
-      "scene3d-lod1",
-      "scene3d-fill3d",
+      "scene3d-building_extruded",
+      "scene3d-building_3d",
       "scene3d-trees",
       "road_label",
       "place_label",
       "scene3d-rocks",
     ]);
-    expect(made.map((m) => m.options.id)).toEqual(["scene3d-fill3d", "scene3d-trees", "scene3d-rocks"]);
+    expect(made.map((m) => m.options.id)).toEqual(["scene3d-building_3d", "scene3d-trees", "scene3d-rocks"]);
     expect(made[1].options.models).toEqual({ tree: "https://example.com/tree.gltf" });
     expect(String((made[2].options.models as Record<string, string>).rock)).toMatch(/\/models\/rock\.gltf$/);
     expect(control.getScene()).toBe(SCENE);
@@ -172,15 +172,24 @@ describe("Scene3dControl", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const scene: Scene3dManifest = {
       ...SCENE,
-      lod1: { ...SCENE.lod1, position: "place_label" },
-      fill3d: { ...SCENE.fill3d, position: "place_label" },
+      building_extruded: { ...SCENE.building_extruded, position: "place_label" },
+      building_3d: { ...SCENE.building_3d, position: "place_label" },
       gltf: [{ id: "trees", models: ["tree"], source: "mtk", "source-layer": "natural", position: "no_such_layer" }],
     };
     const map = createMap({ metadata: { [SCENE3D_METADATA_KEY]: scene } });
     const { load } = fakeLibrary();
     new Scene3dControl({ library: load }).onAdd(map);
     await flush();
-    expect(map.ids()).toEqual(["background", "building_3d", "road", "scene3d-trees", "road_label", "scene3d-lod1", "scene3d-fill3d", "place_label"]);
+    expect(map.ids()).toEqual([
+      "background",
+      "building_extruded",
+      "road",
+      "scene3d-trees",
+      "road_label",
+      "scene3d-building_extruded",
+      "scene3d-building_3d",
+      "place_label",
+    ]);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('"no_such_layer"'));
 
     // A diffed setStyle with the same scene puts LOD1 back where it was: under the Fill3D layer of the same position.
@@ -200,13 +209,13 @@ describe("Scene3dControl", () => {
     await flush();
     expect(map.ids()).not.toContain("scene3d-elsewhere");
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('no source "other"'));
-    expect(map.getLayoutProperty("building_3d", "visibility")).toBeUndefined(); // TileJSON not there yet
+    expect(map.getLayoutProperty("building_extruded", "visibility")).toBeUndefined(); // TileJSON not there yet
     map.loadSource("mtk");
-    expect(map.getLayoutProperty("building_3d", "visibility")).toBeUndefined(); // another source
+    expect(map.getLayoutProperty("building_extruded", "visibility")).toBeUndefined(); // another source
     map.loadSource("scene3d-buildings");
-    expect(map.getLayoutProperty("building_3d", "visibility")).toBe("none");
+    expect(map.getLayoutProperty("building_extruded", "visibility")).toBe("none");
     control.onRemove();
-    expect(map.getLayoutProperty("building_3d", "visibility")).toBe("visible");
+    expect(map.getLayoutProperty("building_extruded", "visibility")).toBe("visible");
     expect(map.ids().some((id) => id.startsWith("scene3d-"))).toBe(false);
     warn.mockRestore();
   });
@@ -217,24 +226,24 @@ describe("Scene3dControl", () => {
     control.onAdd(map);
     await flush();
     // MapLibre answers a 403 on the TileJSON with an error event, never with the metadata event.
-    expect(map.getLayoutProperty("building_3d", "visibility")).toBeUndefined();
+    expect(map.getLayoutProperty("building_extruded", "visibility")).toBeUndefined();
     control.onRemove();
     map.loadSource("scene3d-buildings"); // a late answer after removal changes nothing
-    expect(map.getLayoutProperty("building_3d", "visibility")).toBeUndefined();
+    expect(map.getLayoutProperty("building_extruded", "visibility")).toBeUndefined();
   });
 
   it("adds no buildings source and hides nothing for a scene without buildings", async () => {
-    const map = createMap({ metadata: { [SCENE3D_METADATA_KEY]: { ...SCENE, lod1: undefined, fill3d: undefined } } });
+    const map = createMap({ metadata: { [SCENE3D_METADATA_KEY]: { ...SCENE, building_extruded: undefined, building_3d: undefined } } });
     const control = new Scene3dControl({ library: fakeLibrary().load });
     control.onAdd(map);
     await flush();
     expect(map.addSource).not.toHaveBeenCalled();
     expect(map.ids()).toContain("scene3d-trees");
     map.loadSource("scene3d-buildings");
-    expect(map.getLayoutProperty("building_3d", "visibility")).toBeUndefined();
+    expect(map.getLayoutProperty("building_extruded", "visibility")).toBeUndefined();
     // a diffed setStyle with the same trees-only scene keeps it as it is
     const count = map.ids().length;
-    map.diffStyle(baseLayers(), { [SCENE3D_METADATA_KEY]: { ...SCENE, lod1: undefined, fill3d: undefined } });
+    map.diffStyle(baseLayers(), { [SCENE3D_METADATA_KEY]: { ...SCENE, building_extruded: undefined, building_3d: undefined } });
     await flush();
     expect(map.addSource).not.toHaveBeenCalled();
     expect(map.ids()).toHaveLength(count);
@@ -269,7 +278,7 @@ describe("Scene3dControl", () => {
     new Scene3dControl({ library: load }).onAdd(map);
     await flush();
     expect(load).not.toHaveBeenCalled();
-    expect(map.ids()).toContain("scene3d-lod1"); // the native part needs no library
+    expect(map.ids()).toContain("scene3d-building_extruded"); // the native part needs no library
   });
 
   it("rebuilds from the new style on a style switch, and disposes layers the old style took with it", async () => {
@@ -317,7 +326,7 @@ describe("Scene3dControl", () => {
     expect(made).toHaveLength(count); // no new 3D layers
     expect(map.ids()).toEqual(before); // LOD1 back under them
     expect(map.addSource).toHaveBeenCalledTimes(2);
-    expect(map.getLayoutProperty("building_3d", "visibility")).toBe("none"); // the source had loaded: hidden at once
+    expect(map.getLayoutProperty("building_extruded", "visibility")).toBe("none"); // the source had loaded: hidden at once
   });
 
   it("rebuilds after a diffed setStyle with another scene", async () => {
@@ -356,7 +365,7 @@ describe("Scene3dControl", () => {
     expect(map.ids().some((id) => id.startsWith("scene3d-"))).toBe(false);
     map.diffStyle(baseLayers(), { [SCENE3D_METADATA_KEY]: SCENE });
     await flush();
-    expect(map.ids()).toEqual(expect.arrayContaining(["scene3d-lod1", "scene3d-fill3d", "scene3d-trees"]));
+    expect(map.ids()).toEqual(expect.arrayContaining(["scene3d-building_extruded", "scene3d-building_3d", "scene3d-trees"]));
     map.diffStyle(baseLayers(), {});
     await flush();
     expect(map.ids().some((id) => id.startsWith("scene3d-"))).toBe(false);
@@ -374,36 +383,40 @@ describe("Scene3dControl", () => {
     expect(map.ids().some((id) => id.startsWith("scene3d-"))).toBe(false);
 
     control.setEnabled(true);
-    await control.setScene({ version: 1, source: "https://example.com/b.json", lod1: { paint: {} } });
-    expect(map.ids().filter((id) => id.startsWith("scene3d-"))).toEqual(["scene3d-lod1"]);
+    await control.setScene({ version: 1, source: "https://example.com/b.json", building_extruded: { paint: {} } });
+    expect(map.ids().filter((id) => id.startsWith("scene3d-"))).toEqual(["scene3d-building_extruded"]);
     await control.setScene(null);
     expect(map.ids().some((id) => id.startsWith("scene3d-"))).toBe(false);
   });
 
   it("uses an invisible consumer layer when the scene has Fill3D but no LOD1", async () => {
-    const map = createMap({ metadata: { [SCENE3D_METADATA_KEY]: { version: 1, source: "https://example.com/b.json", fill3d: { paint: {} } } } });
+    const map = createMap({ metadata: { [SCENE3D_METADATA_KEY]: { version: 1, source: "https://example.com/b.json", building_3d: { paint: {} } } } });
     new Scene3dControl({ library: fakeLibrary().load }).onAdd(map);
     await flush();
     const consumer = map.getLayer("scene3d-consumer");
     expect(consumer?.filter).toEqual(["boolean", false]);
   });
 
-  it("passes fill3d.extrusion on to the Fill3DLayer and keeps the lod1 zoom range", async () => {
+  it("passes building_3d.extrusion on to the Fill3DLayer and keeps the building_extruded zoom range", async () => {
     const extrusion = { "source-layer": "buildings2d", filter: ["all", ["!=", ["get", "extrude"], false], [">=", ["zoom"], 15]] as never };
-    const scene: Scene3dManifest = { ...SCENE, lod1: { ...SCENE.lod1, maxzoom: 15 }, fill3d: { ...SCENE.fill3d, extrusion } };
+    const scene: Scene3dManifest = {
+      ...SCENE,
+      building_extruded: { ...SCENE.building_extruded, maxzoom: 15 },
+      building_3d: { ...SCENE.building_3d, extrusion },
+    };
     const map = createMap({ metadata: { [SCENE3D_METADATA_KEY]: scene } });
     const { load, made } = fakeLibrary();
     new Scene3dControl({ library: load }).onAdd(map);
     await flush();
 
     expect(made[0].options).toEqual({
-      id: "scene3d-fill3d",
+      id: "scene3d-building_3d",
       source: "scene3d-buildings",
       "source-layer": "buildings3d",
-      paint: SCENE.fill3d!.paint,
+      paint: SCENE.building_3d!.paint,
       extrusion,
     });
-    expect(map.getLayer("scene3d-lod1")?.maxzoom).toBe(15);
+    expect(map.getLayer("scene3d-building_extruded")?.maxzoom).toBe(15);
   });
 
   it("draws the landmarks as a layer of their own and keeps them out of the buildings", async () => {
@@ -415,7 +428,7 @@ describe("Scene3dControl", () => {
       "fill-3d-ambient-occlusion-ground-radius": 2.5,
     };
     const buildingsPaint = { "fill-3d-color": "#eee", "fill-3d-ambient-occlusion-intensity": 0.5 };
-    const scene: Scene3dManifest = { ...SCENE, fill3d: { paint: buildingsPaint }, landmarks: { position: "place_label", paint } };
+    const scene: Scene3dManifest = { ...SCENE, building_3d: { paint: buildingsPaint }, landmarks_3d: { position: "place_label", paint } };
     const map = createMap({ metadata: { [SCENE3D_METADATA_KEY]: scene } });
     const { load, made } = fakeLibrary();
     const control = new Scene3dControl({ library: load });
@@ -425,34 +438,34 @@ describe("Scene3dControl", () => {
     // right below the layer its position names, the buildings under the labels as before
     expect(map.ids()).toEqual([
       "background",
-      "building_3d",
+      "building_extruded",
       "road",
-      "scene3d-lod1",
-      "scene3d-fill3d",
+      "scene3d-building_extruded",
+      "scene3d-building_3d",
       "scene3d-trees",
       "road_label",
-      "scene3d-landmarks",
+      "scene3d-landmarks_3d",
       "place_label",
       "scene3d-rocks",
     ]);
     const [fill3d, landmarks] = made;
     expect(landmarks.kind).toBe("fill3d"); // a Fill3DLayer too
-    expect(landmarks.options).toEqual({ id: "scene3d-landmarks", source: "scene3d-buildings", "source-layer": "buildings3d", filter: isLandmark, paint });
+    expect(landmarks.options).toEqual({ id: "scene3d-landmarks_3d", source: "scene3d-buildings", "source-layer": "buildings3d", filter: isLandmark, paint });
     expect(fill3d.options.filter).toEqual(["all", ["!", isLandmark]]);
     expect(fill3d.options.paint).toEqual(buildingsPaint); // the AO keys pass through
-    expect(scene.fill3d).toEqual({ paint: buildingsPaint }); // the scene itself is left as it is
-    expect(control.getLayers().map((l) => l.id)).toContain("scene3d-landmarks");
+    expect(scene.building_3d).toEqual({ paint: buildingsPaint }); // the scene itself is left as it is
+    expect(control.getLayers().map((l) => l.id)).toContain("scene3d-landmarks_3d");
 
     // kept through a terrain change like the other 3D layers, removed with them
     map.setTerrain({ source: "dem" });
-    expect(made.filter((m) => m.options.id === "scene3d-landmarks")).toHaveLength(1);
+    expect(made.filter((m) => m.options.id === "scene3d-landmarks_3d")).toHaveLength(1);
     control.onRemove();
     expect(map.ids().some((id) => id.startsWith("scene3d-"))).toBe(false);
   });
 
   it("combines the buildings' own filter with the landmarks' filter, also one the scene names", async () => {
     const own = ["==", ["get", "kind"], "landmark"];
-    const scene: Scene3dManifest = { ...SCENE, fill3d: { filter: ["==", ["get", "type"], "roof"] }, landmarks: { filter: own as never } };
+    const scene: Scene3dManifest = { ...SCENE, building_3d: { filter: ["==", ["get", "type"], "roof"] }, landmarks_3d: { filter: own as never } };
     const map = createMap({ metadata: { [SCENE3D_METADATA_KEY]: scene } });
     const { load, made } = fakeLibrary();
     new Scene3dControl({ library: load }).onAdd(map);
@@ -460,7 +473,7 @@ describe("Scene3dControl", () => {
     expect(made[0].options.filter).toEqual(["all", ["==", ["get", "type"], "roof"], ["!", own]]);
     expect(made[1].options.filter).toEqual(own);
     // both under the labels: the landmarks over the buildings
-    expect(map.ids().indexOf("scene3d-landmarks")).toBe(map.ids().indexOf("scene3d-fill3d") + 1);
+    expect(map.ids().indexOf("scene3d-landmarks_3d")).toBe(map.ids().indexOf("scene3d-building_3d") + 1);
   });
 
   it("leaves the buildings' layer as it is for a scene without landmarks", async () => {
@@ -468,27 +481,71 @@ describe("Scene3dControl", () => {
     const { load, made } = fakeLibrary();
     new Scene3dControl({ library: load }).onAdd(map);
     await flush();
-    expect(made[0].options).toEqual({ id: "scene3d-fill3d", source: "scene3d-buildings", "source-layer": "buildings3d", paint: { "fill-3d-color": "#eee" } });
-    expect(map.ids()).not.toContain("scene3d-landmarks");
+    expect(made[0].options).toEqual({
+      id: "scene3d-building_3d",
+      source: "scene3d-buildings",
+      "source-layer": "buildings3d",
+      paint: { "fill-3d-color": "#eee" },
+    });
+    expect(map.ids()).not.toContain("scene3d-landmarks_3d");
   });
 
   it("draws landmarks without buildings: the source with a consumer layer, the style's own 3D buildings kept", async () => {
-    const scene = { version: 1, source: "https://example.com/b.json", landmarks: { paint: {} } } as Scene3dManifest;
+    const scene = { version: 1, source: "https://example.com/b.json", landmarks_3d: { paint: {} } } as Scene3dManifest;
     const map = createMap({ metadata: { [SCENE3D_METADATA_KEY]: scene } });
     const { load, made } = fakeLibrary();
     new Scene3dControl({ apiKey: "KEY", library: load }).onAdd(map);
     await flush();
     expect(map.addSource).toHaveBeenCalledWith("scene3d-buildings", { type: "vector", url: "https://example.com/b.json?api_key=KEY" });
     expect(map.getLayer("scene3d-consumer")?.filter).toEqual(["boolean", false]);
-    expect(made.map((m) => m.options.id)).toEqual(["scene3d-landmarks"]);
+    expect(made.map((m) => m.options.id)).toEqual(["scene3d-landmarks_3d"]);
     map.loadSource("scene3d-buildings");
-    expect(map.getLayoutProperty("building_3d", "visibility")).toBeUndefined();
+    expect(map.getLayoutProperty("building_extruded", "visibility")).toBeUndefined();
     // a diffed setStyle with the same scene puts the source and the consumer back and keeps the layer
     map.diffStyle(baseLayers(), { [SCENE3D_METADATA_KEY]: structuredClone(scene) });
     await flush();
     expect(map.addSource).toHaveBeenCalledTimes(2);
-    expect(map.ids()).toEqual(expect.arrayContaining(["scene3d-consumer", "scene3d-landmarks"]));
+    expect(map.ids()).toEqual(expect.arrayContaining(["scene3d-consumer", "scene3d-landmarks_3d"]));
     expect(made).toHaveLength(1);
+  });
+
+  it("reads a scene with the entry names before 0.8.0 (lod1, fill3d, landmarks) as the new ones", async () => {
+    const landmarks = { position: "place_label", paint: { "fill-3d-color": "#f00" } };
+    const current: Scene3dManifest = { ...SCENE, landmarks_3d: landmarks };
+    const { building_extruded, building_3d, landmarks_3d, ...rest } = current;
+    const old = { ...rest, lod1: building_extruded, fill3d: building_3d, landmarks: landmarks_3d } as Scene3dManifest;
+    const build = async (scene: Scene3dManifest) => {
+      const map = createMap({ metadata: { [SCENE3D_METADATA_KEY]: scene } });
+      const { load, made } = fakeLibrary();
+      const control = new Scene3dControl({ library: load });
+      control.onAdd(map);
+      await flush();
+      return { ids: map.ids(), options: made.map((m) => m.options), scene: control.getScene() };
+    };
+    const fromOld = await build(old);
+    expect(fromOld).toEqual(await build(current));
+    expect(fromOld.ids).toEqual(expect.arrayContaining(["scene3d-building_extruded", "scene3d-building_3d", "scene3d-landmarks_3d"]));
+    expect(fromOld.scene).toEqual(current);
+    expect(old).not.toHaveProperty("building_3d"); // the style's scene itself is left as it is
+    // a scene with both names: the new one wins
+    const both = { ...current, fill3d: { paint: { "fill-3d-color": "#000" } } } as Scene3dManifest;
+    expect((await build(both)).options[0].paint).toEqual({ "fill-3d-color": "#eee" });
+  });
+
+  it("hides the style's own 3D buildings under their names before style-family-js 2.7.0 too", async () => {
+    const map = createMap({ metadata: {} });
+    new Scene3dControl({ library: fakeLibrary().load }).onAdd(map);
+    const layers = [
+      { id: "background", type: "background" },
+      { id: "building_3d", type: "fill-extrusion", layout: {} },
+      { id: "building_3d_multicolored", type: "fill-extrusion", layout: {} },
+      { id: "place_label", type: "symbol" },
+    ];
+    map.newStyle(layers, { [SCENE3D_METADATA_KEY]: SCENE });
+    await flush();
+    map.loadSource("scene3d-buildings");
+    expect(map.getLayoutProperty("building_3d", "visibility")).toBe("none");
+    expect(map.getLayoutProperty("building_3d_multicolored", "visibility")).toBe("none");
   });
 
   it("warns once when the map's WebGL context has no multisampling", async () => {

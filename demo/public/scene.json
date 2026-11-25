@@ -1,7 +1,7 @@
 {
   "version": 1,
   "source": "https://dataconnector.maptoolkit.net/maptoolkit/buildings3d2.json",
-  "lod1": {
+  "building_extruded": {
     "filter": [
       "!=",
       [
@@ -84,7 +84,7 @@
       ]
     }
   },
-  "fill3d": {
+  "building_3d": {
     "paint": {
       "fill-3d-color": [
         "case",
