@@ -6,7 +6,7 @@ const SCENE: Scene3dManifest = {
   version: 1,
   source: "https://example.com/buildings.json",
   building_extruded: { filter: ["!=", ["get", "extrude"], false], paint: { "fill-extrusion-height": ["get", "height"] } },
-  building_3d: { paint: { "fill-3d-color": "#eee" } },
+  building_3d: { paint: { "fill-3d-color": "#eee" }, style_layers: [{ layers: ["building_extruded"], layout: { visibility: "none" } }] },
   models: { tree: "https://example.com/tree.gltf", rock: "models/rock.gltf" },
   gltf: [
     { id: "trees", models: ["tree"], source: "mtk", "source-layer": "natural", minzoom: 15 },
@@ -63,6 +63,11 @@ function createMap({ metadata = { [SCENE3D_METADATA_KEY]: SCENE } as Record<stri
     addSource: vi.fn((id: string) => void sources.add(id)),
     removeSource: (id: string) => void sources.delete(id),
     getLayoutProperty: (id: string, k: string) => layers.find((l) => l.id === id)?.layout?.[k],
+    getPaintProperty: (id: string, k: string) => (layers.find((l) => l.id === id)?.paint as Record<string, unknown> | undefined)?.[k],
+    setPaintProperty: (id: string, k: string, v: unknown) => {
+      const l = layers.find((x) => x.id === id);
+      if (l) l.paint = { ...(l.paint as Record<string, unknown> | undefined), [k]: v };
+    },
     setLayoutProperty: (id: string, k: string, v: unknown) => {
       const l = layers.find((x) => x.id === id);
       if (l) l.layout = { ...l.layout, [k]: v };
@@ -215,7 +220,7 @@ describe("Scene3dControl", () => {
     map.loadSource("scene3d-buildings");
     expect(map.getLayoutProperty("building_extruded", "visibility")).toBe("none");
     control.onRemove();
-    expect(map.getLayoutProperty("building_extruded", "visibility")).toBe("visible");
+    expect(map.getLayoutProperty("building_extruded", "visibility")).toBeUndefined(); // the style's own value again
     expect(map.ids().some((id) => id.startsWith("scene3d-"))).toBe(false);
     warn.mockRestore();
   });
@@ -532,20 +537,63 @@ describe("Scene3dControl", () => {
     expect((await build(both)).options[0].paint).toEqual({ "fill-3d-color": "#eee" });
   });
 
-  it("hides the style's own 3D buildings under their names before style-family-js 2.7.0 too", async () => {
-    const map = createMap({ metadata: {} });
-    new Scene3dControl({ library: fakeLibrary().load }).onAdd(map);
-    const layers = [
-      { id: "background", type: "background" },
-      { id: "building_3d", type: "fill-extrusion", layout: {} },
-      { id: "building_3d_multicolored", type: "fill-extrusion", layout: {} },
-      { id: "place_label", type: "symbol" },
-    ];
-    map.newStyle(layers, { [SCENE3D_METADATA_KEY]: SCENE });
+  it("adjusts the style layers the scene names (style_layers) once the source loads, and puts the style's values back", async () => {
+    const fade = ["interpolate", ["linear"], ["zoom"], 15, 1, 15.5, 0.5];
+    const scene: Scene3dManifest = {
+      ...SCENE,
+      landmarks_3d: { paint: {}, style_layers: [{ layers: ["road_label", "place_label", "no_such_layer"], paint: { "text-opacity": fade } }] },
+    };
+    const map = createMap({ metadata: { [SCENE3D_METADATA_KEY]: scene } });
+    map.setPaintProperty("road_label", "text-opacity", 0.8); // a value of the style's own
+    const control = new Scene3dControl({ library: fakeLibrary().load });
+    control.onAdd(map);
+    await flush();
+    expect(map.getPaintProperty("place_label", "text-opacity")).toBeUndefined(); // TileJSON not there yet
+    map.loadSource("scene3d-buildings");
+    expect(map.getLayoutProperty("building_extruded", "visibility")).toBe("none");
+    expect(map.getPaintProperty("road_label", "text-opacity")).toEqual(fade);
+    expect(map.getPaintProperty("place_label", "text-opacity")).toEqual(fade);
+    expect(map.ids()).not.toContain("no_such_layer"); // skipped, nothing added
+    // the scene's options never reach the layers
+    expect(map.getLayer("scene3d-building_extruded")).not.toHaveProperty("style_layers");
+    control.onRemove();
+    expect(map.getPaintProperty("road_label", "text-opacity")).toBe(0.8);
+    expect(map.getPaintProperty("place_label", "text-opacity")).toBeUndefined();
+    expect(map.getLayoutProperty("building_extruded", "visibility")).toBeUndefined();
+  });
+
+  it("adjusts them again after a diffed setStyle, and then puts back the new style's values", async () => {
+    const scene: Scene3dManifest = { ...SCENE, landmarks_3d: { style_layers: [{ layers: ["place_label"], paint: { "text-opacity": 0.3 } }] } };
+    const map = createMap({ metadata: { [SCENE3D_METADATA_KEY]: scene } });
+    const control = new Scene3dControl({ library: fakeLibrary().load });
+    control.onAdd(map);
     await flush();
     map.loadSource("scene3d-buildings");
-    expect(map.getLayoutProperty("building_3d", "visibility")).toBe("none");
-    expect(map.getLayoutProperty("building_3d_multicolored", "visibility")).toBe("none");
+    expect(map.getPaintProperty("place_label", "text-opacity")).toBe(0.3);
+    // an editor applying an edit: the same scene, the label layer now with an opacity of its own
+    const next = baseLayers().map((l) => (l.id === "place_label" ? { ...l, paint: { "text-opacity": 0.9 } } : l));
+    map.diffStyle(next, { [SCENE3D_METADATA_KEY]: structuredClone(scene) });
+    await flush();
+    expect(map.getPaintProperty("place_label", "text-opacity")).toBe(0.3); // the source had loaded: at once
+    expect(map.getLayoutProperty("building_extruded", "visibility")).toBe("none");
+    control.onRemove();
+    expect(map.getPaintProperty("place_label", "text-opacity")).toBe(0.9);
+  });
+
+  it("adjusts nothing while the buildings source does not load, or when the scene names no style layers", async () => {
+    const scene: Scene3dManifest = { ...SCENE, landmarks_3d: { style_layers: [{ layers: ["place_label"], paint: { "text-opacity": 0.3 } }] } };
+    const map = createMap({ metadata: { [SCENE3D_METADATA_KEY]: scene } });
+    new Scene3dControl({ library: fakeLibrary().load }).onAdd(map);
+    await flush();
+    // no metadata event: a 403 on the TileJSON
+    expect(map.getPaintProperty("place_label", "text-opacity")).toBeUndefined();
+    expect(map.getLayoutProperty("building_extruded", "visibility")).toBeUndefined();
+
+    const plain = createMap({ metadata: { [SCENE3D_METADATA_KEY]: { ...SCENE, building_3d: { paint: {} } } } });
+    new Scene3dControl({ library: fakeLibrary().load }).onAdd(plain);
+    await flush();
+    plain.loadSource("scene3d-buildings");
+    expect(plain.getLayoutProperty("building_extruded", "visibility")).toBeUndefined(); // no list of its own any more
   });
 
   it("warns once when the map's WebGL context has no multisampling", async () => {
