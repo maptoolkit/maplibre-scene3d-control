@@ -10,6 +10,7 @@ Maptoolkit styles name their scene in `metadata["maptoolkit:scene3d"]`. The cont
 - adds the buildings source with your API key (only for a scene with buildings or landmarks),
 - puts the layers under the style's labels,
 - keeps the tilt in the global state `pitch`, which the scene's opacity fades read,
+- adjusts the style layers the scene names in `style_layers` (e.g. hides the style's own 3D buildings, fades the labels inside a landmark) once the buildings source has loaded, and puts the style's own values back when the scene goes,
 - rebuilds the layers after a style change; a diffed `setStyle` that keeps the scene only puts back what the diff dropped and keeps the 3D layers,
 - leaves the 3D layers in place when the terrain is switched on, off or changed: they move onto the new heights themselves, without loading again,
 - loads the 3D library (with three.js) only once the map reaches zoom 12.
@@ -66,17 +67,16 @@ The file name of the bundled library carries its version, so a new release is a 
 
 ## Options
 
-| Option       | Type                                | Default                                                                                              | Description                                                                                                                                                                                                                                            |
-| ------------ | ----------------------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `apiKey`     | `string`                            | —                                                                                                    | Maptoolkit API key, added to the buildings source URL as `api_key`. Without it the buildings source answers 403.                                                                                                                                       |
-| `scene`      | `Scene3dManifest \| string \| null` | the style's                                                                                          | A scene (or its URL) to show instead of the style's own; `null` shows none.                                                                                                                                                                            |
-| `enabled`    | `boolean`                           | `true`                                                                                               | Show the scene right away.                                                                                                                                                                                                                             |
-| `button`     | `boolean`                           | `false`                                                                                              | Add a 3D button that switches the scene on and off. Without it the control has no UI.                                                                                                                                                                  |
-| `minzoom`    | `number`                            | `12`                                                                                                 | Zoom from which the 3D library is loaded. The buildings source has no tiles below 12.                                                                                                                                                                  |
-| `hideLayers` | `string[]`                          | `["building_extruded", "building_extruded_multicolored", "building_3d", "building_3d_multicolored"]` | Style layers hidden while the scene's buildings are shown, e.g. a style's own 3D buildings (the last two: their names before style-family-js 2.7.0). Hidden only once the buildings source has loaded: without a working API key the style keeps them. |
-| `modelBase`  | `string`                            | document base URL                                                                                    | Base for relative model URLs.                                                                                                                                                                                                                          |
-| `library`    | `() => Promise<Scene3dLibrary>`     | the bundled 3D library                                                                               | Loads the 3D library. Default: `import("@maptoolkit/maplibre-3d-layers")`, in the standalone build the copy next to it. Pass a loader to use another build or version.                                                                                 |
-| `idPrefix`   | `string`                            | `"scene3d-"`                                                                                         | Prefix of the source and layer ids the control adds.                                                                                                                                                                                                   |
+| Option      | Type                                | Default                | Description                                                                                                                                                            |
+| ----------- | ----------------------------------- | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apiKey`    | `string`                            | —                      | Maptoolkit API key, added to the buildings source URL as `api_key`. Without it the buildings source answers 403.                                                       |
+| `scene`     | `Scene3dManifest \| string \| null` | the style's            | A scene (or its URL) to show instead of the style's own; `null` shows none.                                                                                            |
+| `enabled`   | `boolean`                           | `true`                 | Show the scene right away.                                                                                                                                             |
+| `button`    | `boolean`                           | `false`                | Add a 3D button that switches the scene on and off. Without it the control has no UI.                                                                                  |
+| `minzoom`   | `number`                            | `12`                   | Zoom from which the 3D library is loaded. The buildings source has no tiles below 12.                                                                                  |
+| `modelBase` | `string`                            | document base URL      | Base for relative model URLs.                                                                                                                                          |
+| `library`   | `() => Promise<Scene3dLibrary>`     | the bundled 3D library | Loads the 3D library. Default: `import("@maptoolkit/maplibre-3d-layers")`, in the standalone build the copy next to it. Pass a loader to use another build or version. |
+| `idPrefix`  | `string`                            | `"scene3d-"`           | Prefix of the source and layer ids the control adds.                                                                                                                   |
 
 ## Methods
 
@@ -103,8 +103,8 @@ All values are plain MapLibre or maplibre-3d-layers options. Maptoolkit styles g
   version: 1,
   source: "https://…/buildings.json",              // TileJSON of the buildings, without api_key
   building_extruded: { filter, paint, layout },    // fill-extrusion on the source layer buildings2d
-  building_3d: { paint, extrusion },               // Fill3DLayer on the source layer buildings3d
-  landmarks_3d: { position, filter, paint },       // the landmarks in buildings3d, a Fill3DLayer of their own
+  building_3d: { paint, extrusion, style_layers },   // Fill3DLayer on the source layer buildings3d
+  landmarks_3d: { position, filter, paint, style_layers }, // the landmarks in buildings3d, a Fill3DLayer of their own
   models: { tree_1: "https://static.maptoolkit.net/3d/models/…/Tree.gltf" },
   gltf: [{ id, models: ["tree_1"], source: "mtk", "source-layer": "natural", filter, minzoom, layout, paint, lighting }],
 }
@@ -122,7 +122,25 @@ landmarks_3d: {
 }
 ```
 
-`building_3d` then leaves those features out: its filter becomes `["all", <its own filter, if any>, ["!", <the landmarks' filter>]]` (expression filters). A scene without `landmarks_3d` keeps them in `building_3d`, drawn as plain buildings. `landmarks_3d` works without `building_3d` and `building_extruded` too; the style's own 3D buildings (`hideLayers`) then stay. `paint` goes to the `Fill3DLayer` as it is, on `building_3d` as well, including the `fill-3d-ambient-occlusion-*` keys of maplibre-3d-layers ≥ 0.6 (older versions ignore them, and place a landmark like a building instead of rigidly at its anchor).
+`building_3d` then leaves those features out: its filter becomes `["all", <its own filter, if any>, ["!", <the landmarks' filter>]]` (expression filters). A scene without `landmarks_3d` keeps them in `building_3d`, drawn as plain buildings. `landmarks_3d` works without `building_3d` and `building_extruded` too; the style's own 3D buildings then stay, unless its `style_layers` hide them. `paint` goes to the `Fill3DLayer` as it is, on `building_3d` as well, including the `fill-3d-ambient-occlusion-*` keys of maplibre-3d-layers ≥ 0.6 (older versions ignore them, and place a landmark like a building instead of rigidly at its anchor).
+
+`style_layers` (on `building_extruded`, `building_3d` and `landmarks_3d`) names style layers the control adjusts while that part shows: a list of groups, each one value for several layers, so a value shared by many layers is written once:
+
+```js
+building_3d: {
+  …,
+  style_layers: [{ layers: ["building_extruded", "building_extruded_multicolored"], layout: { visibility: "none" } }],
+},
+landmarks_3d: {
+  …,
+  style_layers: [
+    { layers: ["poi_generic_label_rank_4", "place_point_label_rank_5"], paint: { "text-opacity": fade } },
+    { layers: ["poi_generic_label_rank_4"], paint: { "icon-opacity": fade } },
+  ],
+},
+```
+
+The control sets them once the buildings source has loaded (without a working API key it answers 403, and the style stays as it is), sets them again after a diffed `setStyle` (which puts the style's values back), and restores the style's own values when the scene goes or the control is removed. Layers the style lacks are skipped. Keep such values out of the style layers themselves: an expression only newer renderers know, like `["global-state", "pitch"]`, makes MapLibre GL JS before 5.5 reject the whole style and maplibre-native drop the layer; in the scene it reaches only maps with this control. Before 0.9.0 the control hid a fixed list of layers instead (option `hideLayers`, removed).
 
 `building_3d.extrusion` lets the `Fill3DLayer` extrude the 2D footprints as well (maplibre-3d-layers ≥ 0.6.0, experimental), so that they get the shading and the fake ambient occlusion of the 3D buildings. The control passes it on as it is; hand the same footprints over by the zoom of the tile, so that none is drawn twice:
 

@@ -32,6 +32,17 @@ export interface Scene3dGltfLayer {
   doubleSided?: boolean;
 }
 
+/**
+ * Style layers a part of the scene adjusts while it shows: one `layout` / `paint` value for several layers of the
+ * style (e.g. hide the style's own 3D buildings, fade the labels inside a landmark). Applied once the buildings source
+ * has loaded, put back when the part goes. Layers the style lacks are skipped.
+ */
+export interface Scene3dStyleLayers {
+  layers: string[];
+  layout?: Record<string, Expression>;
+  paint?: Record<string, Expression>;
+}
+
 /** The 3D scene of a style, `metadata["maptoolkit:scene3d"]` (version 1). Values are plain MapLibre / maplibre-3d-layers options. */
 export interface Scene3dManifest {
   version: 1;
@@ -45,6 +56,7 @@ export interface Scene3dManifest {
     filter?: FilterSpecification;
     paint?: Record<string, Expression>;
     layout?: Record<string, Expression>;
+    style_layers?: Scene3dStyleLayers[];
   };
   /**
    * `Fill3DLayer` on the source layer `buildings3d`. With `extrusion` it also extrudes the 2D footprints of a source
@@ -57,13 +69,14 @@ export interface Scene3dManifest {
     filter?: FilterSpecification;
     paint?: Record<string, Expression>;
     extrusion?: { "source-layer": string; filter?: FilterSpecification; height?: Expression; base?: Expression };
+    style_layers?: Scene3dStyleLayers[];
   };
   /**
    * The landmarks in the source layer `buildings3d`, as a `Fill3DLayer` of their own: with their own paint and their
    * own place among the style's layers. `filter` picks them (default `["==", ["get", "source"], "landmark"]`), and
    * `building_3d` then leaves those features out.
    */
-  landmarks_3d?: { position?: Scene3dPosition; filter?: FilterSpecification; paint?: Record<string, Expression> };
+  landmarks_3d?: { position?: Scene3dPosition; filter?: FilterSpecification; paint?: Record<string, Expression>; style_layers?: Scene3dStyleLayers[] };
   /** @deprecated The name of `building_extruded` before 0.8.0, still read when `building_extruded` is missing. */
   lod1?: Scene3dManifest["building_extruded"];
   /** @deprecated The name of `building_3d` before 0.8.0, still read when `building_3d` is missing. */
@@ -95,13 +108,6 @@ export interface Scene3dControlOptions {
   button?: boolean;
   /** The 3D library is loaded once the map reaches this zoom; the buildings source has no tiles below 12 (default `12`). */
   minzoom?: number;
-  /**
-   * Style layers hidden while the scene's buildings are shown, e.g. a style's own 3D buildings (default the v2 ids
-   * `building_extruded`, `building_extruded_multicolored`, and their names before style-family-js 2.7.0, `building_3d`,
-   * `building_3d_multicolored`). Hidden only once the buildings source has loaded, so without a working API key the
-   * style keeps them.
-   */
-  hideLayers?: string[];
   /** Base for relative model URLs (default the document's base URL). */
   modelBase?: string;
   /** Loads `@maptoolkit/maplibre-3d-layers` (default a dynamic import of the package). Pass another loader for its standalone build or a CDN. */
@@ -121,7 +127,6 @@ const DEFAULTS: Omit<ResolvedOptions, "library"> = {
   enabled: true,
   button: false,
   minzoom: 12,
-  hideLayers: ["building_extruded", "building_extruded_multicolored", "building_3d", "building_3d_multicolored"],
   idPrefix: "scene3d-",
 };
 
@@ -147,12 +152,31 @@ function withCurrentNames(scene: Scene3dManifest): Scene3dManifest {
     landmarks_3d: rest.landmarks_3d ?? landmarks,
   };
 }
-/** Whether a scene draws buildings, in place of the style's own 3D buildings (`hideLayers`). */
+/** Whether a scene draws buildings. */
 const hasBuildings = (scene: Scene3dManifest) => !!(scene.building_extruded || scene.building_3d);
 /** Whether a scene reads the buildings source: for its buildings or its landmarks. */
 const usesBuildingsSource = (scene: Scene3dManifest) => hasBuildings(scene) || !!scene.landmarks_3d;
+/** The style layers the scene's parts adjust while they show (`style_layers` of every entry). */
+const styleLayersOf = (scene: Scene3dManifest) => [scene.building_extruded, scene.building_3d, scene.landmarks_3d].flatMap((part) => part?.style_layers ?? []);
+/** Whether the scene adjusts style layers: once its buildings source has loaded. */
+const adjustsStyleLayers = (scene: Scene3dManifest) => usesBuildingsSource(scene) && styleLayersOf(scene).length > 0;
 /** The landmarks among the features of the source layer `buildings3d`, unless the scene names another filter. */
 const LANDMARKS_FILTER = ["==", ["get", "source"], "landmark"] as unknown as FilterSpecification;
+/** The map's layer property methods for names that come from the style; MapLibre's types only know its own names. */
+type StyleProps = {
+  getLayoutProperty(id: string, name: string): unknown;
+  getPaintProperty(id: string, name: string): unknown;
+  setLayoutProperty(id: string, name: string, value: unknown): unknown;
+  setPaintProperty(id: string, name: string, value: unknown): unknown;
+};
+const styleProps = (map: MaplibreMap) => map as unknown as StyleProps;
+/** A part's options for its layer: without the scene's own keys, which are no layer options. */
+function layerOptions<T extends { position?: Scene3dPosition; style_layers?: Scene3dStyleLayers[] }>(part: T): Omit<T, "position" | "style_layers"> {
+  const options = { ...part };
+  delete options.position;
+  delete options.style_layers;
+  return options;
+}
 
 /**
  * A MapLibre GL JS control plugin that adds the 3D scene of a Maptoolkit style: 3D buildings
@@ -179,13 +203,14 @@ export class Scene3dControl extends Evented<Scene3dControlEventType> implements 
   private libPromise?: Promise<Scene3dLibrary>;
   private custom: CustomLayerInterface[] = [];
   private native: string[] = [];
-  private hidden = new Map<string, "visible" | "none">();
+  /** The style's own values of the layer properties the scene adjusts, by `layout|paint` + layer id + property. */
+  private adjusted = new Map<string, { id: string; kind: "layout" | "paint"; property: string; value: unknown }>();
   private loadedStyle: StyleHandle = undefined;
   private pitch: number | null = null;
   private building = false;
   private generation = 0;
   private warned = new Set<string>();
-  /** Stops waiting for the buildings source (see hideOnceBuildingsLoad). */
+  /** Stops waiting for the buildings source (see adjustOnceBuildingsLoad). */
   private stopWaiting?: () => void;
   /** The scene last read from the style or override (also an unsupported one), and as JSON; null for none. */
   private sceneRef: Scene3dManifest | null = null;
@@ -408,7 +433,7 @@ export class Scene3dControl extends Evented<Scene3dControlEventType> implements 
       this.scene = scene;
       if (scene) {
         this.syncPitch();
-        if (hasBuildings(scene)) this.hideOnceBuildingsLoad(generation);
+        if (adjustsStyleLayers(scene)) this.adjustOnceBuildingsLoad(generation);
         this.addNative(scene);
         if (this.lib) this.addCustom(scene, generation);
         else if (map.getZoom() >= this.options.minzoom) this.loadCustom(scene, generation);
@@ -450,7 +475,8 @@ export class Scene3dControl extends Evented<Scene3dControlEventType> implements 
     const anchor = this.labelsAnchor();
     const before = (position: Scene3dPosition | undefined) => place(position ?? "below-labels", this.beforeFor(position, anchor));
     if (scene.building_extruded) {
-      const { position, ...extruded } = scene.building_extruded;
+      const { position } = scene.building_extruded;
+      const extruded = layerOptions(scene.building_extruded);
       map.addLayer({ id: `${p}building_extruded`, type: "fill-extrusion", source, "source-layer": "buildings2d", ...extruded } as never, before(position));
       this.native.push(`${p}building_extruded`);
     } else {
@@ -471,15 +497,15 @@ export class Scene3dControl extends Evented<Scene3dControlEventType> implements 
     try {
       for (const id of this.native) if (map.getLayer(id)) map.removeLayer(id);
       this.native = [];
-      // The new style set its own visibility on the layers we hide; remember that one.
-      this.hidden.clear();
+      // The new style brought its own values for the layers we adjust (the diff put them back); remember those.
+      this.adjusted.clear();
       // Under the 3D layers with the same position again, as in a full build.
       this.addNative(scene, (position, before) => this.custom.find((l) => this.customPosition.get(l.id) === position)?.id ?? before);
-      if (hasBuildings(scene)) {
-        if (this.sourceOk) this.hideStyleLayers();
+      if (adjustsStyleLayers(scene)) {
+        if (this.sourceOk) this.adjustStyleLayers();
         else {
           this.stopWaiting?.();
-          this.hideOnceBuildingsLoad(this.generation);
+          this.adjustOnceBuildingsLoad(this.generation);
         }
       }
       this.pitch = null;
@@ -515,7 +541,8 @@ export class Scene3dControl extends Evented<Scene3dControlEventType> implements 
       // `landmarks_3d` keeps them in `building_3d`: drawn as plain buildings rather than missing.
       const landmarksFilter = scene.landmarks_3d ? (scene.landmarks_3d.filter ?? LANDMARKS_FILTER) : undefined;
       if (scene.building_3d) {
-        const { position, ...buildings } = scene.building_3d;
+        const { position } = scene.building_3d;
+        const buildings = layerOptions(scene.building_3d);
         const filter = landmarksFilter && ["all", ...(buildings.filter ? [buildings.filter] : []), ["!", landmarksFilter]];
         add(
           new lib.Fill3DLayer({ id: `${p}building_3d`, source: this.sourceId(), "source-layer": "buildings3d", ...buildings, ...(filter ? { filter } : {}) }),
@@ -523,7 +550,8 @@ export class Scene3dControl extends Evented<Scene3dControlEventType> implements 
         );
       }
       if (scene.landmarks_3d) {
-        const { position, ...landmarks } = scene.landmarks_3d;
+        const { position } = scene.landmarks_3d;
+        const landmarks = layerOptions(scene.landmarks_3d);
         add(
           new lib.Fill3DLayer({ id: `${p}landmarks_3d`, source: this.sourceId(), "source-layer": "buildings3d", ...landmarks, filter: landmarksFilter }),
           position,
@@ -557,7 +585,7 @@ export class Scene3dControl extends Evented<Scene3dControlEventType> implements 
     this.customPosition.clear();
   }
 
-  /** Remove everything the control added; `restore` puts hidden style layers back. */
+  /** Remove everything the control added; `restore` puts the style's own values of the adjusted layers back. */
   private teardown(restore: boolean) {
     const map = this.map;
     this.stopWaiting?.();
@@ -568,11 +596,16 @@ export class Scene3dControl extends Evented<Scene3dControlEventType> implements 
         for (const id of this.native) if (map.getLayer(id)) map.removeLayer(id);
         if (map.getSource(this.sourceId()) && this.styleReady()) map.removeSource(this.sourceId());
         if (restore && this.styleReady()) {
-          for (const [id, visibility] of this.hidden) if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", visibility);
+          const props = styleProps(map);
+          for (const { id, kind, property, value } of this.adjusted.values()) {
+            if (!map.getLayer(id)) continue;
+            if (kind === "layout") props.setLayoutProperty(id, property, value);
+            else props.setPaintProperty(id, property, value);
+          }
         }
       }
       this.native = [];
-      this.hidden.clear();
+      this.adjusted.clear();
       this.scene = null;
       this.sourceOk = false;
     } finally {
@@ -581,10 +614,10 @@ export class Scene3dControl extends Evented<Scene3dControlEventType> implements 
   }
 
   /**
-   * Hide the style's own 3D buildings (`hideLayers`) only once the scene's buildings source has
-   * loaded. Without a working API key it answers 403, and the style keeps its buildings.
+   * Adjust the style layers the scene names (`style_layers`) only once its buildings source has loaded. Without a
+   * working API key it answers 403, and the style stays as it is: its own 3D buildings, its labels.
    */
-  private hideOnceBuildingsLoad(generation: number) {
+  private adjustOnceBuildingsLoad(generation: number) {
     const map = this.map!;
     const id = this.sourceId();
     const onData = (e: MapSourceDataEvent) => {
@@ -593,7 +626,7 @@ export class Scene3dControl extends Evented<Scene3dControlEventType> implements 
       this.stopWaiting?.();
       if (generation !== this.generation || !this.styleReady()) return;
       this.sourceOk = true;
-      this.hideStyleLayers();
+      this.adjustStyleLayers();
     };
     map.on("sourcedata", onData);
     this.stopWaiting = () => {
@@ -602,12 +635,24 @@ export class Scene3dControl extends Evented<Scene3dControlEventType> implements 
     };
   }
 
-  private hideStyleLayers() {
+  private adjustStyleLayers() {
     const map = this.map!;
-    for (const id of this.options.hideLayers) {
-      if (!map.getLayer(id)) continue;
-      this.hidden.set(id, (map.getLayoutProperty(id, "visibility") as "visible" | "none" | undefined) ?? "visible");
-      map.setLayoutProperty(id, "visibility", "none");
+    const props = styleProps(map);
+    for (const group of styleLayersOf(this.scene!)) {
+      for (const id of group.layers) {
+        if (!map.getLayer(id)) continue;
+        for (const kind of ["layout", "paint"] as const) {
+          for (const [property, value] of Object.entries(group[kind] ?? {})) {
+            const key = `${kind}|${id}|${property}`;
+            if (!this.adjusted.has(key)) {
+              const own = kind === "layout" ? props.getLayoutProperty(id, property) : props.getPaintProperty(id, property);
+              this.adjusted.set(key, { id, kind, property, value: own });
+            }
+            if (kind === "layout") props.setLayoutProperty(id, property, value);
+            else props.setPaintProperty(id, property, value);
+          }
+        }
+      }
     }
   }
 
